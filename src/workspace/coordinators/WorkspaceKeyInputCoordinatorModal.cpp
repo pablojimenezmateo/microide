@@ -5,6 +5,8 @@
 
 #include "workspace/WorkspaceCommandParsing.h"
 #include "workspace/WorkspaceTextSearch.h"
+#include "workspace/coordinators/WorkspaceMenuCoordinator.h"
+#include "workspace/coordinators/WorkspaceTextInputCoordinator.h"
 
 namespace microide::workspace {
 
@@ -52,29 +54,26 @@ bool KeyInputCoordinator::HandleDirtyPromptKeyDown(const SDL_KeyboardEvent& even
 bool KeyInputCoordinator::HandleTreeContextMenuKeyDown(const SDL_KeyboardEvent& event) {
   switch (event.key) {
     case SDLK_ESCAPE:
-      operations_.close_tree_context_menu();
+      services_.menus.CloseTreeContextMenu();
       return true;
     case SDLK_DOWN:
-      menu_state_.tree_context_menu.active_item_index = operations_.next_enabled_tree_context_menu_item_index(
-          menu_state_.tree_context_menu.active_item_index, 1);
+      menu_state_.tree_context_menu.active_item_index = services_.menus.NextEnabledTreeContextMenuItemIndex(menu_state_.tree_context_menu.active_item_index, 1);
       return true;
     case SDLK_UP:
-      menu_state_.tree_context_menu.active_item_index = operations_.next_enabled_tree_context_menu_item_index(
-          menu_state_.tree_context_menu.active_item_index, -1);
+      menu_state_.tree_context_menu.active_item_index = services_.menus.NextEnabledTreeContextMenuItemIndex(menu_state_.tree_context_menu.active_item_index, -1);
       return true;
     case SDLK_HOME:
       menu_state_.tree_context_menu.active_item_index =
-          operations_.next_enabled_tree_context_menu_item_index(-1, 1);
+          services_.menus.NextEnabledTreeContextMenuItemIndex(-1, 1);
       return true;
     case SDLK_END:
       menu_state_.tree_context_menu.active_item_index =
-          operations_.next_enabled_tree_context_menu_item_index(-1, -1);
+          services_.menus.NextEnabledTreeContextMenuItemIndex(-1, -1);
       return true;
     case SDLK_RETURN:
     case SDLK_KP_ENTER:
       if (menu_state_.tree_context_menu.active_item_index >= 0) {
-        return operations_.execute_tree_context_menu_item(
-            static_cast<std::size_t>(menu_state_.tree_context_menu.active_item_index));
+        return services_.menus.ExecuteTreeContextMenuItem(static_cast<std::size_t>(menu_state_.tree_context_menu.active_item_index));
       }
       return true;
     default:
@@ -86,27 +85,26 @@ bool KeyInputCoordinator::HandleMenuBarKeyDown(const SDL_KeyboardEvent& event,
                                                SDL_Keymod modifiers) {
   switch (event.key) {
     case SDLK_ESCAPE:
-      operations_.close_menu_bar();
+      services_.menus.CloseMenuBar();
       return true;
     case SDLK_LEFT:
-      return operations_.switch_menu_bar_menu(-1);
+      return services_.menus.SwitchMenuBarMenu(-1);
     case SDLK_RIGHT:
-      return operations_.switch_menu_bar_menu(1);
+      return services_.menus.SwitchMenuBarMenu(1);
     case SDLK_TAB:
-      return operations_.switch_menu_bar_menu((modifiers & SDL_KMOD_SHIFT) != 0 ? -1 : 1);
+      return services_.menus.SwitchMenuBarMenu((modifiers & SDL_KMOD_SHIFT) != 0 ? -1 : 1);
     case SDLK_DOWN:
-      return operations_.move_active_menu_item(1);
+      return services_.menus.MoveActiveMenuItem(1);
     case SDLK_UP:
-      return operations_.move_active_menu_item(-1);
+      return services_.menus.MoveActiveMenuItem(-1);
     case SDLK_HOME:
     case SDLK_END:
       menu_state_.active_menu_item_index = -1;
-      return operations_.move_active_menu_item(event.key == SDLK_HOME ? 1 : -1);
+      return services_.menus.MoveActiveMenuItem(event.key == SDLK_HOME ? 1 : -1);
     case SDLK_RETURN:
     case SDLK_KP_ENTER:
       if (menu_state_.active_menu_item_index >= 0) {
-        return operations_.execute_menu_item(menu_state_.active_menu_id,
-                                             static_cast<std::size_t>(menu_state_.active_menu_item_index));
+        return services_.menus.ExecuteMenuItem(menu_state_.active_menu_id, static_cast<std::size_t>(menu_state_.active_menu_item_index));
       }
       return true;
     default:
@@ -116,9 +114,9 @@ bool KeyInputCoordinator::HandleMenuBarKeyDown(const SDL_KeyboardEvent& event,
 
 bool KeyInputCoordinator::HandleMenuOverflowPopupKeyDown(const SDL_KeyboardEvent& event,
                                                          SDL_Keymod modifiers) {
-  const std::size_t item_count = operations_.menu_overflow_item_count();
+  const std::size_t item_count = services_.menus.MenuOverflowItemCount();
   if (item_count == 0) {
-    operations_.close_menu_overflow_popup();
+    services_.menus.CloseMenuOverflowPopup();
     return true;
   }
   const int last_index = static_cast<int>(item_count) - 1;
@@ -136,7 +134,7 @@ bool KeyInputCoordinator::HandleMenuOverflowPopupKeyDown(const SDL_KeyboardEvent
 
   switch (event.key) {
     case SDLK_ESCAPE:
-      operations_.close_menu_overflow_popup();
+      services_.menus.CloseMenuOverflowPopup();
       return true;
     case SDLK_DOWN:
       return step(1);
@@ -155,8 +153,7 @@ bool KeyInputCoordinator::HandleMenuOverflowPopupKeyDown(const SDL_KeyboardEvent
     case SDLK_SPACE:
     case SDLK_RIGHT:
       if (menu_state_.overflow_popup_active_index >= 0) {
-        operations_.open_menu_overflow_item(
-            static_cast<std::size_t>(menu_state_.overflow_popup_active_index));
+        services_.menus.OpenMenuOverflowItem(static_cast<std::size_t>(menu_state_.overflow_popup_active_index));
       }
       return true;
     default:
@@ -184,7 +181,7 @@ bool KeyInputCoordinator::HandlePromptSurfaceKeyDown(const SDL_KeyboardEvent& ev
           if (std::optional<std::string> completed =
                   CompleteRemoteHostText(prompts_.surface.input.text(), prompts_.surface.completions)) {
             prompts_.surface.input.SetText(std::move(*completed));
-            operations_.request_prompt_redraw();
+            operations_.request_frame();
           }
         }
         return true;
@@ -194,9 +191,9 @@ bool KeyInputCoordinator::HandlePromptSurfaceKeyDown(const SDL_KeyboardEvent& ev
       case SDLK_RIGHT:
       case SDLK_HOME:
       case SDLK_END:
-        return operations_.text_input_handle_single_line_key_down(event, modifiers);
+        return services_.text_input.HandleSingleLineKeyDown(event, modifiers);
       default:
-        return operations_.text_input_handle_single_line_key_down(event, modifiers) || true;
+        return services_.text_input.HandleSingleLineKeyDown(event, modifiers) || true;
     }
   }
 
@@ -256,7 +253,7 @@ bool KeyInputCoordinator::HandleNotificationFocusKeyDown(const SDL_KeyboardEvent
   }
   if (!key.has_value()) {
     notifications_.ClearFocus();
-    EnsureRedraw([this]() { operations_.request_window_redraw(); });
+    EnsureRedraw([this]() { operations_.request_frame(); });
     return false;
   }
   NotificationService::FocusKeyResult result = notifications_.HandleFocusKey(*key);
@@ -264,7 +261,7 @@ bool KeyInputCoordinator::HandleNotificationFocusKeyDown(const SDL_KeyboardEvent
     operations_.execute_action(result.action->id, result.action->args, ActionSource::Command);
   }
   if (result.changed) {
-    EnsureRedraw([this]() { operations_.request_window_redraw(); });
+    EnsureRedraw([this]() { operations_.request_frame(); });
   }
   return true;
 }

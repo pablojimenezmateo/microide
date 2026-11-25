@@ -50,7 +50,7 @@ bool KeyInputCoordinator::HandleGlobalKeyDown(const SDL_KeyboardEvent& event,
   }
 
   const ResolvedKeybinding* binding =
-      FindKeybinding(bindings, event.key, modifiers, key_ctx, operations_.action_enabled);
+      FindKeybinding(bindings, event.key, modifiers, key_ctx, ActionEnabledPredicate());
   if (binding == nullptr) {
     return false;
   }
@@ -138,7 +138,7 @@ std::optional<bool> KeyInputCoordinator::HandleKeyChord(const SDL_KeyboardEvent&
       return std::nullopt;
     }
     const ResolvedKeybinding* binding = FindChordKeybinding(
-        bindings, leader.key, leader.modifiers, event.key, modifiers, key_ctx, operations_.action_enabled);
+        bindings, leader.key, leader.modifiers, event.key, modifiers, key_ctx, ActionEnabledPredicate());
     if (binding == nullptr) {
       return std::nullopt;
     }

@@ -7,6 +7,9 @@
 #include "util/PerformanceTrace.h"
 #include "workspace/SettingFlags.h"
 #include "util/InvokeIfSet.h"
+#include "workspace/services/AssistService.h"
+#include "workspace/SystemClipboard.h"
+#include "workspace/services/CompareMergeService.h"
 
 namespace microide::workspace {
 
@@ -197,7 +200,7 @@ bool KeyInputCoordinator::HandleCompareKeyDown(const SDL_KeyboardEvent& event,
     if ((modifiers & SDL_KMOD_ALT) != 0) {
       const char input_character = operations_.keycode_to_ascii(event.key, modifiers & ~SDL_KMOD_ALT);
       if (input_character == 'o') {
-        operations_.open_working_file_from_compare();
+        services_.compare_merge.interactions().OpenWorkingFileFromCompare();
         return true;
       }
     }
@@ -227,16 +230,16 @@ bool KeyInputCoordinator::HandleCompareKeyDown(const SDL_KeyboardEvent& event,
       operations_.request_close_active_tab();
       return true;
     case SDLK_UP:
-      operations_.move_compare_selection(-1);
+      services_.compare_merge.interactions().MoveCompareSelection(-1);
       return true;
     case SDLK_DOWN:
-      operations_.move_compare_selection(1);
+      services_.compare_merge.interactions().MoveCompareSelection(1);
       return true;
     case SDLK_PAGEUP:
-      operations_.move_compare_selection(-20);
+      services_.compare_merge.interactions().MoveCompareSelection(-20);
       return true;
     case SDLK_PAGEDOWN:
-      operations_.move_compare_selection(20);
+      services_.compare_merge.interactions().MoveCompareSelection(20);
       return true;
     case SDLK_HOME:
       if (auto* active_compare_tab = operations_.active_compare_tab(); active_compare_tab != nullptr) {
@@ -261,7 +264,7 @@ bool KeyInputCoordinator::HandleCompareKeyDown(const SDL_KeyboardEvent& event,
       return true;
     case SDLK_RETURN:
     case SDLK_KP_ENTER:
-      operations_.open_working_file_from_compare();
+      services_.compare_merge.interactions().OpenWorkingFileFromCompare();
       return true;
     default: {
       if ((modifiers & (SDL_KMOD_CTRL | SDL_KMOD_GUI)) != 0) {
@@ -269,15 +272,15 @@ bool KeyInputCoordinator::HandleCompareKeyDown(const SDL_KeyboardEvent& event,
       }
       const char input_character = operations_.keycode_to_ascii(event.key, modifiers);
       if (input_character == 'j') {
-        operations_.move_compare_selection(1);
+        services_.compare_merge.interactions().MoveCompareSelection(1);
         return true;
       }
       if (input_character == 'k') {
-        operations_.move_compare_selection(-1);
+        services_.compare_merge.interactions().MoveCompareSelection(-1);
         return true;
       }
       if (input_character == 'o') {
-        operations_.open_working_file_from_compare();
+        services_.compare_merge.interactions().OpenWorkingFileFromCompare();
         return true;
       }
       if (input_character == 'a') {
@@ -367,7 +370,7 @@ bool KeyInputCoordinator::HandleMergeKeyDown(const SDL_KeyboardEvent& event,
       return true;
     }
     if (input_character == 'o') {
-      operations_.open_merge_result_file();
+      services_.compare_merge.interactions().OpenMergeResultFile();
       return true;
     }
     if (input_character == 'r' && operations_.execute_action) {
@@ -392,7 +395,7 @@ bool KeyInputCoordinator::HandleCommitBodyKeyDown(const SDL_KeyboardEvent& event
   editor::TextViewport& viewport = state_.sidebar.git.commit_workflow.body;
   const auto after_edit = [&]() {
     operations_.reset_caret_blink();
-    operations_.request_sidebar_redraw();
+    operations_.request_frame();
     return true;
   };
 
@@ -419,13 +422,11 @@ bool KeyInputCoordinator::HandleCommitBodyKeyDown(const SDL_KeyboardEvent& event
         return after_edit();
       }
       case SDLK_V: {
-        if (operations_.commit_body_read_clipboard_text) {
-          if (const auto pasted = operations_.commit_body_read_clipboard_text();
-              pasted.has_value() && !pasted->empty()) {
-            ClearCommitBodyHint(viewport);
-            viewport.InsertText(*pasted);
-            return after_edit();
-          }
+        if (const auto pasted = services_.clipboard.Read();
+            pasted.has_value() && !pasted->empty()) {
+          ClearCommitBodyHint(viewport);
+          viewport.InsertText(*pasted);
+          return after_edit();
         }
         return true;
       }
@@ -465,7 +466,7 @@ bool KeyInputCoordinator::HandleDefaultEditorKeyDown(const SDL_KeyboardEvent& ev
       operations_.dismiss_overlay(true);
       return true;
     }
-    if (operations_.try_snippet_escape_in_editor && operations_.try_snippet_escape_in_editor()) {
+    if (services_.assist.snippets().TryEscape()) {
       return true;
     }
     operations_.dismiss_inline_completion();
@@ -492,8 +493,7 @@ bool KeyInputCoordinator::HandleDefaultEditorKeyDown(const SDL_KeyboardEvent& ev
       if (editable_viewport == nullptr) {
         return true;
       }
-      if (operations_.try_snippet_tab_in_editor &&
-          operations_.try_snippet_tab_in_editor((modifiers & SDL_KMOD_SHIFT) != 0)) {
+      if (services_.assist.snippets().TryTab((modifiers & SDL_KMOD_SHIFT) != 0)) {
         return true;
       }
       const editor::TabKeyIntent intent =
@@ -543,8 +543,7 @@ bool KeyInputCoordinator::HandleDefaultEditorKeyDown(const SDL_KeyboardEvent& ev
       if (editable_viewport == nullptr) {
         return true;
       }
-      if (operations_.try_snippet_backspace_in_editor &&
-          operations_.try_snippet_backspace_in_editor(editable_viewport)) {
+      if (services_.assist.snippets().TryBackspace(editable_viewport)) {
         return true;
       }
       if ((modifiers & SDL_KMOD_CTRL) != 0) {
@@ -561,8 +560,7 @@ bool KeyInputCoordinator::HandleDefaultEditorKeyDown(const SDL_KeyboardEvent& ev
       if (editable_viewport == nullptr) {
         return true;
       }
-      if (operations_.try_snippet_delete_forward_in_editor &&
-          operations_.try_snippet_delete_forward_in_editor(editable_viewport)) {
+      if (services_.assist.snippets().TryDeleteForward(editable_viewport)) {
         return true;
       }
       if ((modifiers & SDL_KMOD_CTRL) != 0) {
@@ -582,7 +580,7 @@ bool KeyInputCoordinator::HandleDefaultEditorKeyDown(const SDL_KeyboardEvent& ev
 
   const auto after_editor_caret_motion = [this]() {
     operations_.reset_caret_blink();
-    util::InvokeIfSet(operations_.notify_snippet_session_caret_moved);
+    services_.assist.snippets().NotifyCaretMoved();
   };
 
   const bool ctrl_only =

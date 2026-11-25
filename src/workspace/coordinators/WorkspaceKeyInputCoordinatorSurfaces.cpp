@@ -8,6 +8,10 @@
 
 #include "workspace/ListSelection.h"
 #include "util/InvokeIfSet.h"
+#include "workspace/services/AssistService.h"
+#include "workspace/services/CompareMergeService.h"
+#include "workspace/services/QuickPickService.h"
+#include "workspace/coordinators/WorkspaceTextInputCoordinator.h"
 
 namespace microide::workspace {
 
@@ -93,7 +97,7 @@ bool KeyInputCoordinator::HandleSharedBufferSearchKey(const SDL_KeyboardEvent& e
       return true;
     }
   }
-  return operations_.text_input_handle_single_line_key_down(event, modifiers);
+  return services_.text_input.HandleSingleLineKeyDown(event, modifiers);
 }
 
 bool KeyInputCoordinator::HandleOverlayKeyDown(const SDL_KeyboardEvent& event,
@@ -111,10 +115,10 @@ bool KeyInputCoordinator::HandleOverlayKeyDown(const SDL_KeyboardEvent& event,
       return true;
     }
     if (nav_delta.has_value()) {
-      operations_.move_compare_picker_selection(*nav_delta);
+      services_.compare_merge.interactions().MovePickerSelection(*nav_delta);
       return true;
     }
-    return operations_.text_input_handle_single_line_key_down(event, modifiers);
+    return services_.text_input.HandleSingleLineKeyDown(event, modifiers);
   }
 
   if (state_.overlay.mode == OverlayMode::BufferSearch) {
@@ -176,7 +180,7 @@ bool KeyInputCoordinator::HandleOverlayKeyDown(const SDL_KeyboardEvent& event,
       operations_.move_project_search_selection(*nav_delta);
       return true;
     }
-    return operations_.text_input_handle_single_line_key_down(event, modifiers);
+    return services_.text_input.HandleSingleLineKeyDown(event, modifiers);
   }
 
   if (state_.overlay.mode == OverlayMode::CommandPalette) {
@@ -197,7 +201,7 @@ bool KeyInputCoordinator::HandleOverlayKeyDown(const SDL_KeyboardEvent& event,
       MoveOverlayListSelection(palette.selected_index, palette.matches.size(), *nav_delta);
       return true;
     }
-    return operations_.text_input_handle_single_line_key_down(event, modifiers);
+    return services_.text_input.HandleSingleLineKeyDown(event, modifiers);
   }
 
   if (state_.overlay.mode == OverlayMode::QuickPick) {
@@ -212,10 +216,10 @@ bool KeyInputCoordinator::HandleOverlayKeyDown(const SDL_KeyboardEvent& event,
     }
     if (nav_delta.has_value()) {
       MoveOverlayListSelection(picker.selected_index, picker.matches.size(), *nav_delta);
-      util::InvokeIfSet(operations_.quick_pick_selection_changed);
+      services_.quick_pick.SelectionChanged();
       return true;
     }
-    return operations_.text_input_handle_single_line_key_down(event, modifiers);
+    return services_.text_input.HandleSingleLineKeyDown(event, modifiers);
   }
 
   if (state_.overlay.mode == OverlayMode::Completion ||
@@ -263,7 +267,7 @@ bool KeyInputCoordinator::HandleOverlayKeyDown(const SDL_KeyboardEvent& event,
     }
     if (handled) {
       operations_.request_frame();
-      operations_.follow_completion_caret();
+      services_.assist.completion().FollowCompletionCaret();
     }
     return handled;
   }
@@ -276,7 +280,7 @@ bool KeyInputCoordinator::HandleOverlayKeyDown(const SDL_KeyboardEvent& event,
     operations_.move_file_finder_selection(*nav_delta);
     return true;
   }
-  return operations_.text_input_handle_single_line_key_down(event, modifiers);
+  return services_.text_input.HandleSingleLineKeyDown(event, modifiers);
 }
 
 }

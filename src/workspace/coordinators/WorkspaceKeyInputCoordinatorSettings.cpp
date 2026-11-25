@@ -3,18 +3,20 @@
 #include <optional>
 
 #include "workspace/ListSelection.h"
+#include "workspace/services/SettingsOverlayService.h"
+#include "workspace/coordinators/WorkspaceTextInputCoordinator.h"
 
 namespace microide::workspace {
 
 bool KeyInputCoordinator::HandleSettingsOverlayKeyDown(const SDL_KeyboardEvent& event,
                                                        SDL_Keymod modifiers) {
   const auto overlay_redraw = [&]() {
-    EnsureRedraw([this]() { operations_.request_overlay_redraw(); });
+    EnsureRedraw([this]() { operations_.request_frame(); });
   };
 
-  if (operations_.settings_value_edit_active && operations_.settings_value_edit_active()) {
+  if (services_.settings_overlay.EditingValue()) {
     const bool picker =
-        operations_.settings_value_edit_is_picker && operations_.settings_value_edit_is_picker();
+        services_.settings_overlay.EditingFonts();
     if (event.key == SDLK_RETURN || event.key == SDLK_KP_ENTER) {
       operations_.settings_commit_value_edit();
     } else if (event.key == SDLK_ESCAPE) {
@@ -22,9 +24,9 @@ bool KeyInputCoordinator::HandleSettingsOverlayKeyDown(const SDL_KeyboardEvent& 
     } else if (picker && (event.key == SDLK_DOWN || event.key == SDLK_UP)) {
       operations_.settings_picker_move(event.key == SDLK_DOWN ? 1 : -1);
     } else {
-      operations_.text_input_handle_single_line_key_down(event, modifiers);
-      if (picker && operations_.settings_picker_reset_highlight) {
-        operations_.settings_picker_reset_highlight();
+      services_.text_input.HandleSingleLineKeyDown(event, modifiers);
+      if (picker) {
+        services_.settings_overlay.ResetPickerHighlight();
       }
     }
     overlay_redraw();
@@ -33,7 +35,7 @@ bool KeyInputCoordinator::HandleSettingsOverlayKeyDown(const SDL_KeyboardEvent& 
 
   if (event.key == SDLK_ESCAPE) {
     operations_.close_settings_overlay();
-    EnsureRedraw([this]() { operations_.request_window_redraw(); });
+    EnsureRedraw([this]() { operations_.request_frame(); });
     return true;
   }
 
@@ -41,7 +43,7 @@ bool KeyInputCoordinator::HandleSettingsOverlayKeyDown(const SDL_KeyboardEvent& 
   constexpr int kCategoryPane = 1;
   constexpr int kValuePane = 2;
 
-  if (!operations_.settings_overlay_is_settings_mode()) {
+  if (services_.settings_overlay.Mode() != SettingsOverlayMode::Settings) {
     if (const auto delta =
             ListNavigationKeyDelta(event.key, operations_.settings_pane_item_count(kValuePane));
         delta.has_value()) {
@@ -49,7 +51,7 @@ bool KeyInputCoordinator::HandleSettingsOverlayKeyDown(const SDL_KeyboardEvent& 
       overlay_redraw();
       return true;
     }
-    operations_.text_input_handle_single_line_key_down(event, modifiers);
+    services_.text_input.HandleSingleLineKeyDown(event, modifiers);
     overlay_redraw();
     return true;
   }
@@ -66,7 +68,7 @@ bool KeyInputCoordinator::HandleSettingsOverlayKeyDown(const SDL_KeyboardEvent& 
       operations_.settings_focus_pane(kValuePane);
       operations_.settings_move_row(event.key == SDLK_DOWN ? 1 : -1);
     } else {
-      operations_.text_input_handle_single_line_key_down(event, modifiers);
+      services_.text_input.HandleSingleLineKeyDown(event, modifiers);
     }
     overlay_redraw();
     return true;

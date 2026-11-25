@@ -7,6 +7,8 @@
 #include "project/CommitWorkflowTypes.h"
 #include "workspace/git/GitSidebarCommandCenter.h"
 #include "workspace/ListSelection.h"
+#include "workspace/services/SidebarService.h"
+#include "workspace/coordinators/WorkspaceTextInputCoordinator.h"
 
 namespace microide::workspace {
 bool KeyInputCoordinator::HandleSidebarKeyDown(const SDL_KeyboardEvent& event,
@@ -32,7 +34,7 @@ bool KeyInputCoordinator::HandleSidebarKeyDown(const SDL_KeyboardEvent& event,
       if (!state_.sidebar.temporary) {
         return false;
       }
-      operations_.close_sidebar();
+      services_.sidebar.Close();
       return true;
     }
   }
@@ -94,7 +96,7 @@ bool KeyInputCoordinator::HandleSidebarKeyDown(const SDL_KeyboardEvent& event,
           return true;
         }
         default:
-          return operations_.text_input_handle_single_line_key_down(event, modifiers);
+          return services_.text_input.HandleSingleLineKeyDown(event, modifiers);
       }
     }
 
@@ -120,7 +122,7 @@ bool KeyInputCoordinator::HandleSidebarKeyDown(const SDL_KeyboardEvent& event,
             viewport->JumpCursorTo(result.line, result.column);
           }
           if (state_.sidebar.temporary) {
-            operations_.restore_previous_sidebar();
+            services_.sidebar.RestorePrevious();
           }
           state_.surface.focus = FocusTarget::Editor;
           operations_.seed_buffer_search_from_project_search();
@@ -180,13 +182,13 @@ bool KeyInputCoordinator::HandleSidebarKeyDown(const SDL_KeyboardEvent& event,
       if (workflow.focus_field == CommitWorkflowFocusField::Body) {
         return HandleCommitBodyKeyDown(event, modifiers);
       }
-      return operations_.text_input_handle_single_line_key_down(event, modifiers);
+      return services_.text_input.HandleSingleLineKeyDown(event, modifiers);
     }
     const std::size_t selected_index = state_.sidebar.git.selected_index;
     if (const auto delta =
             ListNavigationKeyDelta(event.key, state_.sidebar.git.entries.size());
         delta.has_value()) {
-      operations_.move_git_sidebar_selection(*delta);
+      services_.sidebar.MoveGitSelection(*delta);
       return true;
     }
     switch (event.key) {
@@ -200,9 +202,7 @@ bool KeyInputCoordinator::HandleSidebarKeyDown(const SDL_KeyboardEvent& event,
     if ((modifiers & (SDL_KMOD_CTRL | SDL_KMOD_ALT | SDL_KMOD_GUI)) == 0) {
       const char typed = operations_.keycode_to_ascii(event.key, modifiers);
       if (typed > ' ' && typed < 127) {
-        if (operations_.type_navigate_git_sidebar) {
-          (void)operations_.type_navigate_git_sidebar(typed, event.timestamp);
-        }
+        (void)services_.sidebar.TypeNavigateGit(typed, event.timestamp);
         return true;
       }
     }
@@ -213,14 +213,14 @@ bool KeyInputCoordinator::HandleSidebarKeyDown(const SDL_KeyboardEvent& event,
     if (const auto delta =
             ListNavigationKeyDelta(event.key, state_.sidebar.problems.entries.size());
         delta.has_value()) {
-      operations_.move_problems_sidebar_selection(*delta);
+      services_.sidebar.MoveProblemsSelection(*delta);
       return true;
     }
     switch (event.key) {
       case SDLK_RETURN:
       case SDLK_KP_ENTER:
       case SDLK_RIGHT:
-        return operations_.open_selected_problem_sidebar_item();
+        return services_.sidebar.OpenProblemItem();
       case SDLK_R:
         return operations_.refresh_problems_sidebar();
       default:
@@ -232,20 +232,20 @@ bool KeyInputCoordinator::HandleSidebarKeyDown(const SDL_KeyboardEvent& event,
     if (const auto delta =
             ListNavigationKeyDelta(event.key, state_.sidebar.tests.entries.size());
         delta.has_value()) {
-      operations_.move_tests_sidebar_selection(*delta);
+      services_.sidebar.MoveTestsSelection(*delta);
       return true;
     }
     switch (event.key) {
       case SDLK_RETURN:
       case SDLK_KP_ENTER:
       case SDLK_RIGHT:
-        return operations_.open_selected_test_sidebar_item();
+        return services_.sidebar.OpenTestItem();
       case SDLK_R: {
         const char input_character = operations_.keycode_to_ascii(event.key, modifiers);
         if (input_character == 'r') {
-          return operations_.run_selected_test_sidebar_item();
+          return services_.sidebar.RunTestItem();
         }
-        return operations_.refresh_tests_sidebar();
+        return services_.sidebar.RefreshTests();
       }
       default:
         return false;
@@ -262,7 +262,7 @@ bool KeyInputCoordinator::HandleSidebarKeyDown(const SDL_KeyboardEvent& event,
     if (const auto delta =
             ListNavigationKeyDelta(event.key, state_.sidebar.plugin.items.size());
         delta.has_value()) {
-      operations_.move_plugin_sidebar_selection(*delta);
+      services_.sidebar.MovePluginSelection(*delta);
       return true;
     }
     switch (event.key) {
@@ -285,9 +285,9 @@ bool KeyInputCoordinator::HandleSidebarKeyDown(const SDL_KeyboardEvent& event,
         }
         return false;
       case SDLK_R:
-        return operations_.refresh_plugin_sidebar();
+        return services_.sidebar.RefreshPlugin();
       case SDLK_DELETE:
-        return operations_.end_selected_plugin_sidebar_item && operations_.end_selected_plugin_sidebar_item();
+        return services_.sidebar.EndPluginItem();
       default:
         return false;
     }
@@ -297,7 +297,7 @@ bool KeyInputCoordinator::HandleSidebarKeyDown(const SDL_KeyboardEvent& event,
           ListNavigationKeyDelta(event.key, state_.directory_tree.entries().size());
       delta.has_value()) {
     state_.directory_tree.MoveSelection(*delta);
-    operations_.reveal_selected_tree_sidebar_line();
+    services_.sidebar.RevealSelectedTreeLine();
     return true;
   }
   if (NormalizedKeyModifiers(modifiers) == SDL_KMOD_CTRL &&
@@ -317,16 +317,16 @@ bool KeyInputCoordinator::HandleSidebarKeyDown(const SDL_KeyboardEvent& event,
       return true;
     case SDLK_LEFT:
       state_.directory_tree.CollapseSelection();
-      operations_.reveal_selected_tree_sidebar_line();
+      services_.sidebar.RevealSelectedTreeLine();
       return true;
     case SDLK_RIGHT:
       state_.directory_tree.ExpandSelection();
-      operations_.reveal_selected_tree_sidebar_line();
+      services_.sidebar.RevealSelectedTreeLine();
       return true;
     case SDLK_RETURN:
     case SDLK_KP_ENTER: {
       const auto opened = state_.directory_tree.ActivateSelection();
-      operations_.reveal_selected_tree_sidebar_line();
+      services_.sidebar.RevealSelectedTreeLine();
       if (opened.has_value()) {
         operations_.open_file(*opened);
         state_.surface.focus = FocusTarget::Sidebar;
@@ -346,7 +346,7 @@ bool KeyInputCoordinator::HandleSidebarKeyDown(const SDL_KeyboardEvent& event,
               [&entries](std::size_t i) { return std::string_view(entries[i].label); });
           index.has_value()) {
         state_.directory_tree.SetSelectedIndex(*index);
-        operations_.reveal_selected_tree_sidebar_line();
+        services_.sidebar.RevealSelectedTreeLine();
       }
       return true;
     }

@@ -17,18 +17,27 @@
 #include "workspace/coordinators/WorkspaceTextInputCoordinator.h"
 #include "workspace/shell/WorkspaceShell.h"
 #include "util/InvokeIfSet.h"
+#include "workspace/actions/WorkspaceActionAvailability.h"
+#include "workspace/debug/DebugService.h"
+#include "workspace/services/SettingsOverlayService.h"
 
 namespace microide::workspace {
 
 KeyInputCoordinator::KeyInputCoordinator(ProjectWorkspaceState& state, PromptState& prompts,
                                          MenuSurfaceState& menu_state,
                                          NotificationService& notifications,
+                                         Services services,
                                          Operations operations)
     : state_(state),
       prompts_(prompts),
       menu_state_(menu_state),
       notifications_(notifications),
+      services_(services),
       operations_(std::move(operations)) {}
+
+std::function<bool(ActionId)> KeyInputCoordinator::ActionEnabledPredicate() const {
+  return [this](ActionId id) { return services_.availability.IsEnabled(id); };
+}
 
 bool KeyInputCoordinator::HandleKeyDown(const SDL_KeyboardEvent& event) {
   key_damage_mark_ = operations_.damage_generation();
@@ -66,9 +75,9 @@ bool KeyInputCoordinator::DispatchKeyDown(const SDL_KeyboardEvent& event, SDL_Ke
   if (prompts_.dirty_visible) {
     const bool handled = HandleDirtyPromptKeyDown(event, modifiers);
     if (handled && prompts_.dirty_visible) {
-      operations_.request_prompt_redraw();
+      operations_.request_frame();
     } else if (handled) {
-      EnsureRedraw([this]() { operations_.request_prompt_redraw(); });
+      EnsureRedraw([this]() { operations_.request_frame(); });
     }
     return handled;
   }
@@ -87,16 +96,16 @@ bool KeyInputCoordinator::DispatchKeyDown(const SDL_KeyboardEvent& event, SDL_Ke
   if (menu_state_.overflow_popup_open) {
     return menu_surface_key(HandleMenuOverflowPopupKeyDown(event, modifiers));
   }
-  if (operations_.settings_overlay_visible()) {
+  if (services_.settings_overlay.Visible()) {
     return HandleSettingsOverlayKeyDown(event, modifiers);
   }
-  if (operations_.text_input_composition_consumes_key(event.key, modifiers)) {
+  if (services_.text_input.CompositionConsumesKey(event.key, modifiers)) {
     return true;
   }
   if (prompts_.surface_visible) {
     const bool handled = HandlePromptSurfaceKeyDown(event);
     if (handled) {
-      EnsureRedraw([this]() { operations_.request_prompt_redraw(); });
+      EnsureRedraw([this]() { operations_.request_frame(); });
     }
     return handled;
   }
@@ -108,7 +117,7 @@ bool KeyInputCoordinator::DispatchKeyDown(const SDL_KeyboardEvent& event, SDL_Ke
   if (state_.surface.focus == FocusTarget::DebugPane &&
       state_.debug_pane.mode == DebugPaneMode::Variables) {
     if (HandleDebugVariablesKeyDown(event, modifiers)) {
-      EnsureRedraw([this]() { operations_.request_window_redraw(); });
+      EnsureRedraw([this]() { operations_.request_frame(); });
       return true;
     }
   }
@@ -116,7 +125,7 @@ bool KeyInputCoordinator::DispatchKeyDown(const SDL_KeyboardEvent& event, SDL_Ke
   if (state_.surface.focus == FocusTarget::DebugPane &&
       state_.debug_pane.mode == DebugPaneMode::Watch) {
     if (HandleDebugWatchKeyDown(event, modifiers)) {
-      EnsureRedraw([this]() { operations_.request_window_redraw(); });
+      EnsureRedraw([this]() { operations_.request_frame(); });
       return true;
     }
   }
@@ -124,14 +133,14 @@ bool KeyInputCoordinator::DispatchKeyDown(const SDL_KeyboardEvent& event, SDL_Ke
   if (state_.surface.focus == FocusTarget::DebugPane &&
       state_.debug_pane.mode == DebugPaneMode::CallStack) {
     if (HandleDebugCallStackKeyDown(event)) {
-      EnsureRedraw([this]() { operations_.request_window_redraw(); });
+      EnsureRedraw([this]() { operations_.request_frame(); });
       return true;
     }
   }
   if (state_.surface.focus == FocusTarget::DebugPane &&
       state_.debug_pane.mode == DebugPaneMode::Breakpoints) {
     if (HandleDebugBreakpointsKeyDown(event)) {
-      EnsureRedraw([this]() { operations_.request_window_redraw(); });
+      EnsureRedraw([this]() { operations_.request_frame(); });
       return true;
     }
   }
@@ -142,7 +151,7 @@ bool KeyInputCoordinator::DispatchKeyDown(const SDL_KeyboardEvent& event, SDL_Ke
     return true;
   }
   if (HandleSurfaceNavigationKeyDown(event, modifiers)) {
-    EnsureRedraw([this]() { operations_.request_window_redraw(); });
+    EnsureRedraw([this]() { operations_.request_frame(); });
     return true;
   }
   if (state_.surface.focus == FocusTarget::DebugPane && state_.debug_pane.visible) {
@@ -151,14 +160,14 @@ bool KeyInputCoordinator::DispatchKeyDown(const SDL_KeyboardEvent& event, SDL_Ke
   if (state_.surface.focus == FocusTarget::Overlay) {
     const bool handled = HandleOverlayKeyDown(event, modifiers);
     if (handled) {
-      EnsureRedraw([this]() { operations_.request_overlay_redraw(); });
+      EnsureRedraw([this]() { operations_.request_frame(); });
     }
     return handled;
   }
   if (state_.surface.focus == FocusTarget::Sidebar && state_.sidebar.visible) {
     const bool handled = HandleSidebarKeyDown(event, modifiers);
     if (handled) {
-      EnsureRedraw([this]() { operations_.request_sidebar_redraw(); });
+      EnsureRedraw([this]() { operations_.request_frame(); });
     }
     return handled;
   }
@@ -172,12 +181,12 @@ bool KeyInputCoordinator::DispatchKeyDown(const SDL_KeyboardEvent& event, SDL_Ke
         operations_.scroll_bottom_panel_rows && operations_.bottom_panel_visible_rows) {
       const int page = std::max(1, operations_.bottom_panel_visible_rows() - 1);
       operations_.scroll_bottom_panel_rows(event.key == SDLK_PAGEUP ? -page : page);
-      EnsureRedraw([this]() { operations_.request_bottom_panel_content_redraw(); });
+      EnsureRedraw([this]() { operations_.request_frame(); });
       return true;
     }
     const bool handled = operations_.text_input_handle_terminal_key_down(event, modifiers);
     if (handled) {
-      EnsureRedraw([this]() { operations_.request_bottom_panel_content_redraw(); });
+      EnsureRedraw([this]() { operations_.request_frame(); });
     }
     return handled;
   }
@@ -185,7 +194,7 @@ bool KeyInputCoordinator::DispatchKeyDown(const SDL_KeyboardEvent& event, SDL_Ke
       state_.panel.content != PanelContentKind::None) {
     const bool handled = HandleBottomPanelKeyDown(event);
     if (handled) {
-      EnsureRedraw([this]() { operations_.request_bottom_panel_content_redraw(); });
+      EnsureRedraw([this]() { operations_.request_frame(); });
     }
     return handled;
   }
@@ -218,13 +227,13 @@ bool KeyInputCoordinator::HandleDebugVariablesKeyDown(const SDL_KeyboardEvent& e
     switch (event.key) {
       case SDLK_RETURN:
       case SDLK_KP_ENTER:
-        util::InvokeIfSet(operations_.commit_debug_variable_edit);
+        services_.debug.CommitVariableEdit();
         return true;
       case SDLK_ESCAPE:
-        util::InvokeIfSet(operations_.cancel_debug_variable_edit);
+        services_.debug.CancelVariableEdit();
         return true;
       default:
-        operations_.text_input_handle_single_line_key_down(event, modifiers);
+        services_.text_input.HandleSingleLineKeyDown(event, modifiers);
         return true;
     }
   }
@@ -239,25 +248,23 @@ bool KeyInputCoordinator::HandleDebugVariablesKeyDown(const SDL_KeyboardEvent& e
   }
   switch (event.key) {
     case SDLK_RIGHT:
-      if (row != nullptr && row->has_children && !row->expanded &&
-          operations_.toggle_debug_variable_row) {
-        operations_.toggle_debug_variable_row(selected);
+      if (row != nullptr && row->has_children && !row->expanded) {
+        services_.debug.ToggleVariableRow(selected);
         operations_.reveal_debug_pane_selection();
       }
       return true;
     case SDLK_LEFT:
-      if (row != nullptr && row->has_children && row->expanded &&
-          operations_.toggle_debug_variable_row) {
-        operations_.toggle_debug_variable_row(selected);
+      if (row != nullptr && row->has_children && row->expanded) {
+        services_.debug.ToggleVariableRow(selected);
       }
       return true;
     case SDLK_RETURN:
     case SDLK_KP_ENTER:
       if (row != nullptr) {
         if (row->has_children || row->is_show_more) {
-          util::InvokeIfSet(operations_.toggle_debug_variable_row, selected);
-        } else if (row->editable && operations_.begin_debug_variable_edit) {
-          operations_.begin_debug_variable_edit(selected);
+          services_.debug.ToggleVariableRow(selected);
+        } else if (row->editable) {
+          services_.debug.BeginVariableEdit(selected);
         }
       }
       return true;
@@ -344,13 +351,13 @@ bool KeyInputCoordinator::HandleDebugWatchKeyDown(const SDL_KeyboardEvent& event
     switch (event.key) {
       case SDLK_RETURN:
       case SDLK_KP_ENTER:
-        util::InvokeIfSet(operations_.commit_debug_watch_edit);
+        services_.debug.CommitWatchEdit();
         return true;
       case SDLK_ESCAPE:
-        util::InvokeIfSet(operations_.cancel_debug_watch_edit);
+        services_.debug.CancelWatchEdit();
         return true;
       default:
-        operations_.text_input_handle_single_line_key_down(event, modifiers);
+        services_.text_input.HandleSingleLineKeyDown(event, modifiers);
         return true;
     }
   }
@@ -369,23 +376,21 @@ bool KeyInputCoordinator::HandleDebugWatchKeyDown(const SDL_KeyboardEvent& event
   }
   switch (event.key) {
     case SDLK_RIGHT:
-      if (row != nullptr && row->has_children && !row->expanded &&
-          operations_.toggle_debug_watch_row) {
-        operations_.toggle_debug_watch_row(selected);
+      if (row != nullptr && row->has_children && !row->expanded) {
+        services_.debug.ToggleWatchRow(selected);
       }
       return true;
     case SDLK_LEFT:
-      if (row != nullptr && row->has_children && row->expanded &&
-          operations_.toggle_debug_watch_row) {
-        operations_.toggle_debug_watch_row(selected);
+      if (row != nullptr && row->has_children && row->expanded) {
+        services_.debug.ToggleWatchRow(selected);
       }
       return true;
     case SDLK_INSERT:
       util::InvokeIfSet(operations_.add_debug_watch_expression);
       return true;
     case SDLK_DELETE:
-      if (expr_index.has_value() && operations_.remove_debug_watch_expression) {
-        operations_.remove_debug_watch_expression(*expr_index);
+      if (expr_index.has_value()) {
+        services_.debug.RemoveWatch(*expr_index);
       }
       return true;
     case SDLK_RETURN:
@@ -394,9 +399,9 @@ bool KeyInputCoordinator::HandleDebugWatchKeyDown(const SDL_KeyboardEvent& event
         util::InvokeIfSet(operations_.edit_debug_watch_expression, *expr_index);
       } else if (row != nullptr) {
         if (row->has_children) {
-          util::InvokeIfSet(operations_.toggle_debug_watch_row, selected);
-        } else if (row->editable && operations_.begin_debug_watch_edit) {
-          operations_.begin_debug_watch_edit(selected);
+          services_.debug.ToggleWatchRow(selected);
+        } else if (row->editable) {
+          services_.debug.BeginWatchEdit(selected);
         }
       }
       return true;
@@ -437,14 +442,20 @@ KeyInputCoordinator& WorkspaceShell::MakeKeyInputCoordinator() {
   glue_->key_input_coordinator = std::make_unique<KeyInputCoordinator>(
       context_.current_project_state, context_.prompts, context_.menu_state,
       notification_service_,
+      KeyInputCoordinator::Services{
+          .sidebar = MakeSidebarService(),
+          .menus = MakeMenuCoordinator(),
+          .debug = debug_service_,
+          .assist = assist_service_,
+          .settings_overlay = settings_overlay_service_,
+          .compare_merge = MakeCompareMergeService(),
+          .text_input = MakeTextInputCoordinator(),
+          .quick_pick = quick_pick_service_,
+          .clipboard = clipboard_,
+          .availability = MakeActionAvailability(),
+      },
       KeyInputCoordinator::Operations{
           .damage_generation = [this]() { return MarkDamage(); },
-          .request_prompt_redraw = [this]() { RequestPreparedFrame(); },
-          .request_window_redraw = [this]() { RequestPreparedFrame(); },
-          .request_overlay_redraw = [this]() { RequestPreparedFrame(); },
-          .request_sidebar_redraw = [this]() { RequestPreparedFrame(); },
-          .request_bottom_panel_content_redraw =
-              [this]() { RequestPreparedFrame(); },
           .scroll_bottom_panel_rows =
               [this](int row_delta) {
                 if (const auto layout = CurrentWorkspaceLayout(); layout.has_value()) {
@@ -464,16 +475,8 @@ KeyInputCoordinator& WorkspaceShell::MakeKeyInputCoordinator() {
                 return layout.has_value() ? BottomPanelVisibleRows(layout->bottom_panel.h) : 0;
               },
           .request_frame = [this]() { RequestPreparedFrame(); },
-          .text_input_composition_consumes_key =
-              [this](SDL_Keycode key, SDL_Keymod modifiers) {
-                return MakeTextInputCoordinator().CompositionConsumesKey(key, modifiers);
-              },
           .current_text_input_surface =
               [this]() { return CurrentTextInputSurface(); },
-          .text_input_handle_single_line_key_down =
-              [this](const SDL_KeyboardEvent& event, SDL_Keymod modifiers) {
-                return MakeTextInputCoordinator().HandleSingleLineKeyDown(event, modifiers);
-              },
           .text_input_handle_terminal_key_down =
               [this](const SDL_KeyboardEvent& event, SDL_Keymod modifiers) {
                 if (HandleTerminalFindKeyDown(event, modifiers)) {
@@ -487,27 +490,6 @@ KeyInputCoordinator& WorkspaceShell::MakeKeyInputCoordinator() {
           .keycode_to_ascii =
               [](SDL_Keycode key, SDL_Keymod modifiers) {
                 return KeycodeToAscii(key, modifiers);
-              },
-          .close_tree_context_menu = [this]() { MakeMenuCoordinator().CloseTreeContextMenu(); },
-          .next_enabled_tree_context_menu_item_index =
-              [this](int current_index, int delta) {
-                return MakeMenuCoordinator().NextEnabledTreeContextMenuItemIndex(current_index, delta);
-              },
-          .execute_tree_context_menu_item =
-              [this](std::size_t index) {
-                return MakeMenuCoordinator().ExecuteTreeContextMenuItem(index);
-              },
-          .close_menu_bar = [this]() { MakeMenuCoordinator().CloseMenuBar(); },
-          .menu_overflow_item_count = [this]() { return MakeMenuCoordinator().MenuOverflowItemCount(); },
-          .open_menu_overflow_item = [this](std::size_t i) { return MakeMenuCoordinator().OpenMenuOverflowItem(i); },
-          .close_menu_overflow_popup = [this]() { MakeMenuCoordinator().CloseMenuOverflowPopup(); },
-          .switch_menu_bar_menu =
-              [this](int delta) { return MakeMenuCoordinator().SwitchMenuBarMenu(delta); },
-          .move_active_menu_item =
-              [this](int delta) { return MakeMenuCoordinator().MoveActiveMenuItem(delta); },
-          .execute_menu_item =
-              [this](MenuId id, std::size_t index) {
-                return MakeMenuCoordinator().ExecuteMenuItem(id, index);
               },
           .dismiss_prompt_surface = [this](bool restore_focus) { DismissPromptSurface(restore_focus); },
           .confirm_prompt_surface = [this]() { ConfirmPromptSurface(); },
@@ -530,12 +512,7 @@ KeyInputCoordinator& WorkspaceShell::MakeKeyInputCoordinator() {
           .active_editable_viewport = [this]() { return ActiveEditableViewport(); },
           .active_terminal_pane = [this]() { return ActiveTerminalPane(); },
           .dismiss_overlay = [this](bool focus_editor) { DismissOverlay(focus_editor); },
-          .settings_overlay_visible = [this]() { return settings_overlay_service_.Visible(); },
           .close_settings_overlay = [this]() { CloseSettingsOverlay(); },
-          .settings_overlay_is_settings_mode =
-              [this]() {
-                return settings_overlay_service_.Mode() == SettingsOverlayMode::Settings;
-              },
           .settings_focused_pane =
               [this]() { return static_cast<int>(settings_overlay_service_.FocusedPane()); },
           .settings_focus_pane =
@@ -600,22 +577,14 @@ KeyInputCoordinator& WorkspaceShell::MakeKeyInputCoordinator() {
                   RefreshSettingsOverlayCatalog();
                 }
               },
-          .settings_value_edit_active =
-              [this]() { return settings_overlay_service_.EditingValue(); },
           .settings_commit_value_edit = [this]() { CommitSettingValueEdit(); },
           .settings_cancel_value_edit = [this]() { CancelSettingValueEdit(); },
-          .settings_value_edit_is_picker =
-              [this]() { return settings_overlay_service_.EditingFonts(); },
           .settings_picker_move = [this](int delta) { MoveSettingsFontPicker(delta); },
-          .settings_picker_reset_highlight =
-              [this]() { settings_overlay_service_.ResetPickerHighlight(); },
-          .close_sidebar = [this]() { MakeSidebarService().Close(); },
           .active_sidebar_mode = [this]() { return ActiveSidebarMode(); },
           .activate_overlay_selection =
               [this]() {
                 ActivateOverlaySelection();
               },
-          .quick_pick_selection_changed = [this]() { quick_pick_service_.SelectionChanged(); },
           .step_recent_editors =
               [this](bool back) {
                 QuickPickState& pick = context_.current_project_state.overlay.workflow.quick_pick;
@@ -646,9 +615,7 @@ KeyInputCoordinator& WorkspaceShell::MakeKeyInputCoordinator() {
                 const auto layout = CurrentWorkspaceLayout();
                 return layout.has_value() && MakeSidebarMouseCoordinator().OpenSelectionContextMenu(*layout);
               },
-          .action_enabled = [this](ActionId id) { return MakeActionAvailability().IsEnabled(id); },
           .complete_command_palette_query = [this]() { CompleteCommandPaletteQuery(); },
-          .move_compare_picker_selection = [this](int delta) { MakeCompareMergeService().interactions().MovePickerSelection(delta); },
           .current_workspace_layout = [this]() { return CurrentWorkspaceLayout(); },
           .compute_overlay_rect = [this](const SDL_FRect& rect) { return ComputeOverlayRect(rect); },
           .reveal_overlay_selection = [this](const SDL_FRect& rect) { RevealOverlaySelection(rect); },
@@ -674,12 +641,8 @@ KeyInputCoordinator& WorkspaceShell::MakeKeyInputCoordinator() {
           .replace_all_project_search_matches = [this]() { RequestProjectSearchReplaceAll(); },
           .open_file = [this](const std::filesystem::path& path) { OpenFile(path); },
           .active_editor_viewport = [this]() { return ActiveEditorViewport(); },
-          .restore_previous_sidebar = [this]() { MakeSidebarService().RestorePrevious(); },
           .seed_buffer_search_from_project_search =
               [this]() { OpenBufferSearchFromProjectSearchResult(); },
-          .move_git_sidebar_selection = [this](int delta) { MakeSidebarService().MoveGitSelection(delta); },
-          .type_navigate_git_sidebar =
-              [this](char typed, std::uint64_t now_ns) { return MakeSidebarService().TypeNavigateGit(typed, now_ns); },
           .dispatch_git_sidebar_action =
               [this](GitSidebarActionId action, std::size_t index) {
                 return DispatchGitSidebarAction(action, index);
@@ -703,23 +666,9 @@ KeyInputCoordinator& WorkspaceShell::MakeKeyInputCoordinator() {
               },
           .commit_body_write_clipboard_text =
               [this](std::string_view text) { return WriteClipboardText(text); },
-          .commit_body_read_clipboard_text = [this]() { return clipboard_.Read(); },
-          .move_problems_sidebar_selection = [this](int delta) { MakeSidebarService().MoveProblemsSelection(delta); },
-          .open_selected_problem_sidebar_item = [this]() { return MakeSidebarService().OpenProblemItem(); },
           .refresh_problems_sidebar = [this]() { return RefreshProblemsSidebar(); },
-          .move_tests_sidebar_selection = [this](int delta) { MakeSidebarService().MoveTestsSelection(delta); },
-          .open_selected_test_sidebar_item =
-              [this]() { return MakeSidebarService().OpenTestItem(); },
-          .run_selected_test_sidebar_item =
-              [this]() { return MakeSidebarService().RunTestItem(); },
-          .refresh_tests_sidebar = [this]() { return MakeSidebarService().RefreshTests(); },
-          .move_plugin_sidebar_selection = [this](int delta) { MakeSidebarService().MovePluginSelection(delta); },
           .open_selected_plugin_sidebar_item = [this]() { return OpenSelectedPluginSidebarItem(); },
           .toggle_plugin_sidebar_item = [this]() { return ToggleSelectedPluginSidebarItem(); },
-          .end_selected_plugin_sidebar_item = [this]() { return MakeSidebarService().EndPluginItem(); },
-          .refresh_plugin_sidebar = [this]() { return MakeSidebarService().RefreshPlugin(); },
-          .reveal_selected_tree_sidebar_line = [this]() { MakeSidebarService().RevealSelectedTreeLine(); },
-          .move_compare_selection = [this](int delta) { MakeCompareMergeService().interactions().MoveCompareSelection(delta); },
           .jump_compare_hunk = [this](int delta) { JumpCompareHunk(delta); },
           .stage_compare_hunk = [this]() { StageCompareHunk(); },
           .stage_compare_selected_lines = [this]() { StageCompareSelectedLines(); },
@@ -728,7 +677,6 @@ KeyInputCoordinator& WorkspaceShell::MakeKeyInputCoordinator() {
           .open_discard_compare_hunk_prompt = [this]() { OpenDiscardCompareHunkPrompt(); },
           .open_discard_compare_selected_lines_prompt =
               [this]() { OpenDiscardCompareSelectedLinesPrompt(); },
-          .open_working_file_from_compare = [this]() { MakeCompareMergeService().interactions().OpenWorkingFileFromCompare(); },
           .active_compare_tab = [this]() { return ActiveCompareTab(); },
           .refresh_compare_tab_derived_state =
               [this](CompareTabState& compare_tab) { RefreshCompareTabDerivedState(compare_tab); },
@@ -755,20 +703,6 @@ KeyInputCoordinator& WorkspaceShell::MakeKeyInputCoordinator() {
           .reveal_active_compare_selection = [this]() { RevealActiveCompareSelection(); },
           .accept_inline_completion = [this]() { return AcceptGhostText(); },
           .dismiss_inline_completion = [this]() { DismissGhostText(); },
-          .follow_completion_caret = [this]() { assist_service_.completion().FollowCompletionCaret(); },
-          .try_snippet_tab_in_editor =
-              [this](bool shift_tab) { return assist_service_.snippets().TryTab(shift_tab); },
-          .try_snippet_escape_in_editor = [this]() { return assist_service_.snippets().TryEscape(); },
-          .try_snippet_backspace_in_editor =
-              [this](editor::TextViewport* viewport) {
-                return assist_service_.snippets().TryBackspace(viewport);
-              },
-          .try_snippet_delete_forward_in_editor =
-              [this](editor::TextViewport* viewport) {
-                return assist_service_.snippets().TryDeleteForward(viewport);
-              },
-          .notify_snippet_session_caret_moved =
-              [this]() { assist_service_.snippets().NotifyCaretMoved(); },
           .get_setting_value =
               [this](std::string_view id) { return GetSettingValue(id); },
           .active_merge_tab = [this]() { return ActiveMergeTab(); },
@@ -778,22 +712,9 @@ KeyInputCoordinator& WorkspaceShell::MakeKeyInputCoordinator() {
               },
           .move_merge_selection = [this](int delta) { MoveMergeSelection(delta); },
           .apply_merge_choice = [this](compare::MergeChoice choice) { ApplyMergeChoice(choice); },
-          .open_merge_result_file = [this]() { MakeCompareMergeService().interactions().OpenMergeResultFile(); },
-          .toggle_debug_variable_row =
-              [this](std::size_t row) { debug_service_.ToggleVariableRow(row); },
-          .begin_debug_variable_edit =
-              [this](std::size_t row) { debug_service_.BeginVariableEdit(row); },
-          .commit_debug_variable_edit = [this]() { debug_service_.CommitVariableEdit(); },
-          .cancel_debug_variable_edit = [this]() { debug_service_.CancelVariableEdit(); },
-          .toggle_debug_watch_row = [this](std::size_t row) { debug_service_.ToggleWatchRow(row); },
-          .begin_debug_watch_edit = [this](std::size_t row) { debug_service_.BeginWatchEdit(row); },
-          .commit_debug_watch_edit = [this]() { debug_service_.CommitWatchEdit(); },
-          .cancel_debug_watch_edit = [this]() { debug_service_.CancelWatchEdit(); },
           .add_debug_watch_expression = [this]() { OpenWatchExpressionPrompt(std::nullopt); },
           .edit_debug_watch_expression =
               [this](std::size_t index) { OpenWatchExpressionPrompt(index); },
-          .remove_debug_watch_expression =
-              [this](std::size_t index) { debug_service_.RemoveWatch(index); },
       });
   return *glue_->key_input_coordinator;
 }

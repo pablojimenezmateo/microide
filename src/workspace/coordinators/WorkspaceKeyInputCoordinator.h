@@ -21,36 +21,43 @@
 
 namespace microide::workspace {
 
+class ActionAvailability;
+class AssistService;
+class CompareMergeService;
+class DebugService;
+class MenuCoordinator;
+class QuickPickService;
+class SettingsOverlayService;
+class SidebarCoordinator;
+class SystemClipboard;
+class TextInputCoordinator;
+
 class KeyInputCoordinator {
  public:
+  struct Services {
+    SidebarCoordinator& sidebar;
+    MenuCoordinator& menus;
+    DebugService& debug;
+    AssistService& assist;
+    SettingsOverlayService& settings_overlay;
+    CompareMergeService& compare_merge;
+    TextInputCoordinator& text_input;
+    QuickPickService& quick_pick;
+    SystemClipboard& clipboard;
+    const ActionAvailability& availability;
+  };
+
   struct Operations {
     std::function<DamageMark()> damage_generation;
-    std::function<void()> request_prompt_redraw;
-    std::function<void()> request_window_redraw;
-    std::function<void()> request_overlay_redraw;
-    std::function<void()> request_sidebar_redraw;
-    std::function<void()> request_bottom_panel_content_redraw;
     std::function<void(int)> scroll_bottom_panel_rows;
     std::function<int()> bottom_panel_scroll_span_rows;
     std::function<int()> bottom_panel_visible_rows;
     std::function<void()> request_frame;
-    std::function<bool(SDL_Keycode, SDL_Keymod)> text_input_composition_consumes_key;
     std::function<TextInputSurface()> current_text_input_surface;
-    std::function<bool(const SDL_KeyboardEvent&, SDL_Keymod)> text_input_handle_single_line_key_down;
     std::function<bool(const SDL_KeyboardEvent&, SDL_Keymod)> text_input_handle_terminal_key_down;
     std::function<void(bool)> set_swallow_next_text_input;
     std::function<void()> confirm_dirty_prompt;
     std::function<char(SDL_Keycode, SDL_Keymod)> keycode_to_ascii;
-    std::function<void()> close_tree_context_menu;
-    std::function<int(int, int)> next_enabled_tree_context_menu_item_index;
-    std::function<bool(std::size_t)> execute_tree_context_menu_item;
-    std::function<void()> close_menu_bar;
-    std::function<std::size_t()> menu_overflow_item_count;
-    std::function<bool(std::size_t)> open_menu_overflow_item;
-    std::function<void()> close_menu_overflow_popup;
-    std::function<bool(int)> switch_menu_bar_menu;
-    std::function<bool(int)> move_active_menu_item;
-    std::function<bool(MenuId, std::size_t)> execute_menu_item;
     std::function<void(bool)> dismiss_prompt_surface;
     std::function<void()> confirm_prompt_surface;
     std::function<bool(ActionId, const std::vector<std::string>&, ActionSource)> execute_action;
@@ -63,9 +70,7 @@ class KeyInputCoordinator {
     std::function<editor::TextViewport*()> active_editable_viewport;
     std::function<TerminalPaneState*()> active_terminal_pane;
     std::function<void(bool)> dismiss_overlay;
-    std::function<bool()> settings_overlay_visible;
     std::function<void()> close_settings_overlay;
-    std::function<bool()> settings_overlay_is_settings_mode;
     std::function<int()> settings_focused_pane;
     std::function<void(int)> settings_focus_pane;
     std::function<void(int)> settings_cycle_focus;
@@ -76,21 +81,14 @@ class KeyInputCoordinator {
     std::function<void(int)> settings_step_selected;
     std::function<void()> settings_toggle_or_activate_selected;
     std::function<void()> settings_reset_selected;
-    std::function<bool()> settings_value_edit_active;
     std::function<void()> settings_commit_value_edit;
     std::function<void()> settings_cancel_value_edit;
-    std::function<bool()> settings_value_edit_is_picker;
     std::function<void(int)> settings_picker_move;
-    std::function<void()> settings_picker_reset_highlight;
-    std::function<void()> close_sidebar;
     std::function<SidebarMode()> active_sidebar_mode;
     std::function<void()> activate_overlay_selection;
-    std::function<void()> quick_pick_selection_changed;
     std::function<bool(bool back)> step_recent_editors;
     std::function<bool()> open_sidebar_selection_context_menu;
-    std::function<bool(ActionId)> action_enabled;
     std::function<void()> complete_command_palette_query;
-    std::function<void(int)> move_compare_picker_selection;
     std::function<std::optional<WorkspaceLayout>()> current_workspace_layout;
     std::function<SDL_FRect(const SDL_FRect&)> compute_overlay_rect;
     std::function<void(const SDL_FRect&)> reveal_overlay_selection;
@@ -112,30 +110,15 @@ class KeyInputCoordinator {
     std::function<void()> replace_all_project_search_matches;
     std::function<void(const std::filesystem::path&)> open_file;
     std::function<editor::TextViewport*()> active_editor_viewport;
-    std::function<void()> restore_previous_sidebar;
     std::function<void()> seed_buffer_search_from_project_search;
-    std::function<void(int)> move_git_sidebar_selection;
-    std::function<bool(char, std::uint64_t)> type_navigate_git_sidebar;
     std::function<bool(GitSidebarActionId, std::size_t)> dispatch_git_sidebar_action;
     std::function<void()> close_commit_workflow;
     std::function<bool()> request_commit_workflow_commit;
     std::function<void(CommitWorkflowFocusField)> set_commit_workflow_focus_field;
     std::function<bool(std::string_view)> commit_body_write_clipboard_text;
-    std::function<std::optional<std::string>()> commit_body_read_clipboard_text;
-    std::function<void(int)> move_problems_sidebar_selection;
-    std::function<bool()> open_selected_problem_sidebar_item;
     std::function<bool()> refresh_problems_sidebar;
-    std::function<void(int)> move_tests_sidebar_selection;
-    std::function<bool()> open_selected_test_sidebar_item;
-    std::function<bool()> run_selected_test_sidebar_item;
-    std::function<bool()> refresh_tests_sidebar;
-    std::function<void(int)> move_plugin_sidebar_selection;
     std::function<bool()> open_selected_plugin_sidebar_item;
     std::function<bool()> toggle_plugin_sidebar_item;
-    std::function<bool()> end_selected_plugin_sidebar_item;
-    std::function<bool()> refresh_plugin_sidebar;
-    std::function<void()> reveal_selected_tree_sidebar_line;
-    std::function<void(int)> move_compare_selection;
     std::function<void(int)> jump_compare_hunk;
     std::function<void()> stage_compare_hunk;
     std::function<void()> stage_compare_selected_lines;
@@ -143,7 +126,6 @@ class KeyInputCoordinator {
     std::function<void()> unstage_compare_selected_lines;
     std::function<void()> open_discard_compare_hunk_prompt;
     std::function<void()> open_discard_compare_selected_lines_prompt;
-    std::function<void()> open_working_file_from_compare;
     std::function<CompareTabState*()> active_compare_tab;
     std::function<void(CompareTabState&)> refresh_compare_tab_derived_state;
     std::function<void(CompareTabState&, bool)> sync_compare_selection_from_viewport;
@@ -156,35 +138,20 @@ class KeyInputCoordinator {
     std::function<void()> reveal_active_compare_selection;
     std::function<bool()> accept_inline_completion;
     std::function<void()> dismiss_inline_completion;
-    std::function<void()> follow_completion_caret;
-    std::function<bool(bool)> try_snippet_tab_in_editor;
-    std::function<bool()> try_snippet_escape_in_editor;
-    std::function<bool(editor::TextViewport*)> try_snippet_backspace_in_editor;
-    std::function<bool(editor::TextViewport*)> try_snippet_delete_forward_in_editor;
-    std::function<void()> notify_snippet_session_caret_moved;
     std::function<std::optional<std::string>(std::string_view)> get_setting_value;
     std::function<MergeTabState*()> active_merge_tab;
     std::function<void(MergeTabState&)> update_merge_tracking_after_viewport_edit;
     std::function<void(int)> move_merge_selection;
     std::function<void(compare::MergeChoice)> apply_merge_choice;
-    std::function<void()> open_merge_result_file;
-    std::function<void(std::size_t)> toggle_debug_variable_row;
-    std::function<void(std::size_t)> begin_debug_variable_edit;
-    std::function<void()> commit_debug_variable_edit;
-    std::function<void()> cancel_debug_variable_edit;
-    std::function<void(std::size_t)> toggle_debug_watch_row;
-    std::function<void(std::size_t)> begin_debug_watch_edit;
-    std::function<void()> commit_debug_watch_edit;
-    std::function<void()> cancel_debug_watch_edit;
     std::function<void()> add_debug_watch_expression;
     std::function<void(std::size_t)> edit_debug_watch_expression;
-    std::function<void(std::size_t)> remove_debug_watch_expression;
   };
 
   KeyInputCoordinator(ProjectWorkspaceState& state,
                       PromptState& prompts,
                       MenuSurfaceState& menu_state,
                       NotificationService& notifications,
+                      Services services,
                       Operations operations);
 
   bool HandleKeyDown(const SDL_KeyboardEvent& event);
@@ -208,6 +175,7 @@ class KeyInputCoordinator {
                                      SDL_Keymod modifiers,
                                      KeybindingContext key_ctx);
   KeybindingContext ActiveKeybindingContext() const;
+  std::function<bool(ActionId)> ActionEnabledPredicate() const;
   bool DispatchResolvedKeybinding(const ResolvedKeybinding& binding, ActionSource source);
   bool HandleSurfaceNavigationKeyDown(const SDL_KeyboardEvent& event, SDL_Keymod modifiers);
   bool HandleOverlayKeyDown(const SDL_KeyboardEvent& event, SDL_Keymod modifiers);
@@ -237,6 +205,7 @@ class KeyInputCoordinator {
   PromptState& prompts_;
   MenuSurfaceState& menu_state_;
   NotificationService& notifications_;
+  Services services_;
   Operations operations_;
   DispatchProbe dispatch_probe_;
   DamageMark key_damage_mark_ = 0;
