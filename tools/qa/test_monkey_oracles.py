@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import collections
 import contextlib
+import hashlib
 import os
 import random
 import re
@@ -1715,6 +1716,107 @@ class CrashPointTests(unittest.TestCase):
         oracle, app = self.oracle({"crash-points": monkey_oracles.q.QaFailure("unknown query")})
         self.assertEqual(oracle._kill_at("kill:durable.writing@session#1|edit"), (False, [], None))
         app.send_line.assert_not_called()
+
+
+class CleanBufferTests(unittest.TestCase):
+    """DataOracle.check_clean: a clean buffer must hold its file's bytes once the
+    file stops changing."""
+
+    def setUp(self):
+        self.dir = Path(tempfile.mkdtemp())
+        self.addCleanup(lambda: __import__("shutil").rmtree(self.dir, ignore_errors=True))
+
+    def oracle(self, docs, content=None):
+        app = mock.Mock()
+        app.work = self.dir
+        app.project = self.dir
+
+        def query(verb, args=None):
+            if verb == "documents" and args and "content" in args:
+                return content or []
+            return [dict(doc) for doc in docs]
+        app.query.side_effect = query
+        return monkey_oracles.DataOracle(app), app
+
+    def file(self, name, data):
+        path = self.dir / name
+        path.write_bytes(data)
+        return str(path), hashlib.sha256(data).hexdigest()
+
+    def check(self, oracle):
+        with mock.patch.object(monkey_oracles.time, "sleep", lambda _s: None):
+            return [message for _, message in oracle.check_clean()]
+
+    def test_a_clean_buffer_that_holds_its_file_is_fine(self):
+        path, sha = self.file("a.txt", b"same\n")
+        oracle, _ = self.oracle([{"path": path, "sha256": sha, "dirty": False}])
+        self.assertEqual(self.check(oracle), [])
+
+    def test_a_stable_disagreement_is_a_finding_with_both_sides(self):
+        path, disk_sha = self.file("a.txt", b"disk text\n")
+        (self.dir / "microide-1.log").write_text(
+            f"microide buffer-io: read path={path} bytes=10\nmicroide other: path={path} \n"
+            f"microide buffer-io: write path={self.dir / 'b.txt'} bytes=3\n")
+        doc = {"path": path, "sha256": "f" * 64, "dirty": False}
+        oracle, _ = self.oracle([doc], content=[{"path": path, "contentHex": b"buffer text\n".hex()}])
+        self.assertEqual(self.check(oracle), [f"the clean buffer of a.txt differs from its file on disk "
+                                              f"(buffer {'f' * 12}, disk {disk_sha[:12]}) and the file is not "
+                                              f"changing"])
+        self.assertEqual(oracle.evidence["mismatch-a.txt.disk"], b"disk text\n")
+        self.assertEqual(oracle.evidence["mismatch-a.txt.buffer"], b"buffer text\n")
+        summary = oracle.evidence["mismatch-a.txt.txt"].decode()
+        self.assertIn("buffer 12 bytes, disk 10 bytes; first difference at byte 0", summary)
+        self.assertIn(f"disk sha256:   {disk_sha}", summary)
+        history = oracle.evidence["mismatch-a.txt.io.txt"].decode()
+        self.assertIn("microide-1.log: microide buffer-io: read", history)
+        self.assertNotIn("other", history)
+        self.assertNotIn("b.txt", history)
+
+    def test_the_first_difference_is_where_they_part(self):
+        path, _ = self.file("a.txt", b"abcdXf")
+        oracle, _ = self.oracle([], content=[{"path": path, "contentHex": b"abcdef".hex()}])
+        summary = oracle._mismatch_evidence(path, ("x", "y"))[f"mismatch-a.txt.txt"].decode()
+        self.assertIn("first difference at byte 4", summary)
+        self.assertIn("buffer[4:+48]: b'ef'", summary)
+        path, _ = self.file("b.txt", b"abc")
+        oracle, _ = self.oracle([], content=[{"path": path, "contentHex": b"abcdef".hex()}])
+        self.assertIn("first difference at byte 3", oracle._mismatch_evidence(path, ("x", "y"))[
+            "mismatch-b.txt.txt"].decode(), "a prefix parts where the shorter ends")
+
+    def test_a_file_still_being_rewritten_is_not_a_finding(self):
+        path, _ = self.file("a.txt", b"one\n")
+        oracle, _ = self.oracle([{"path": path, "sha256": "f" * 64, "dirty": False}])
+        writes = iter([b"two\n", b"three\n", b"four\n"])
+        real = oracle.clean_mismatches
+
+        def changing(docs):
+            found = real(docs)
+            with contextlib.suppress(StopIteration):
+                Path(path).write_bytes(next(writes))
+            return found
+        with mock.patch.object(oracle, "clean_mismatches", side_effect=changing):
+            self.assertEqual(self.check(oracle), [])
+
+    def test_dirty_read_only_mixed_and_pathless_buffers_are_not_compared(self):
+        path, _ = self.file("a.txt", b"disk\n")
+        for extra in ({"dirty": True}, {"readOnly": True}, {"mixedLineEndings": True}):
+            oracle, _ = self.oracle([{"path": path, "sha256": "f" * 64, "dirty": False, **extra}])
+            self.assertEqual(self.check(oracle), [], extra)
+        oracle, _ = self.oracle([{"path": "", "sha256": "f" * 64, "dirty": False},
+                                 {"path": str(self.dir / "gone.txt"), "sha256": "f" * 64, "dirty": False}])
+        self.assertEqual(self.check(oracle), [], "no path, or no file to compare with")
+
+    def test_a_save_temporary_of_this_process_is_a_leftover(self):
+        (self.dir / ".git").mkdir()
+        (self.dir / ".git" / ".x.microide-staging.42.0").write_text("")
+        (self.dir / "sub").mkdir()
+        (self.dir / "sub" / ".a.txt.microide-staging.42.3").write_text("")
+        (self.dir / ".b.txt.microide-staging.7.0").write_text("")
+        oracle, app = self.oracle([])
+        self.assertEqual(oracle.staging_leftovers(42), [self.dir / "sub" / ".a.txt.microide-staging.42.3"])
+        self.assertEqual(oracle.staging_leftovers(None), [])
+        app.project = None
+        self.assertEqual(oracle.staging_leftovers(42), [])
 
 if __name__ == "__main__":
     unittest.main()
