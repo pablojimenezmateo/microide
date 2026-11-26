@@ -217,6 +217,19 @@ class RecordingTests(unittest.TestCase):
                             self.soak.family("data", "data: the clean buffer of rtl.txt differs from its file"))
         self.assertEqual(self.soak.family("overlap", "overlap: a overlaps b"), "overlap: a overlaps b")
 
+    def test_one_stale_element_is_one_family_however_the_frame_caught_it(self):
+        labels = ["log: [statusBar|outside|area|status:line-column] QA-STALE frame=<n> reason=prepared pixels=<n>",
+                  "log: [statusBar|clip-edge|area|status:line-column] QA-STALE frame=<n> reason=prepared pixels=<n>",
+                  "log: [statusBar|outside|area|status:line-column] QA-STALE frame=<n> reason=render-settle pixels=<n>",
+                  "log: [statusBar|outside|line|status:line-column] QA-STALE frame=<n> reason=scheduled-partial"]
+        self.assertEqual(len({self.soak.family("log", label) for label in labels}), 1)
+        self.assertNotEqual(self.soak.family("log", labels[0]), self.soak.family(
+            "log", "log: [statusBar|outside|area|status:encoding] QA-STALE frame=<n> reason=prepared pixels=<n>"))
+        unnamed = ["log: [sidebar|outside|area|-] QA-STALE frame=<n> reason=prepared pixels=<n>",
+                   "log: [sidebar|outside|area|-] QA-STALE frame=<n> reason=render-settle pixels=<n>"]
+        self.assertEqual(len({self.soak.family("log", label) for label in unnamed}), 2,
+                         "without an element the reason still tells defects apart")
+
     def test_the_rotation_follows_what_was_lost_not_how_many_signatures(self):
         state: dict = {}
         book = self.soak.ledger()

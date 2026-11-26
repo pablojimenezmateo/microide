@@ -645,13 +645,20 @@ def family(kind: str, label: str) -> str:
     """A label with what splits one defect into many signatures taken out: the
     file a data or undo finding names (the kill -9 restore failure is ten
     signatures, one per fixture file), a leak's budget note, a stale frame's
-    clip count. For reading the ledger, not for deduplication."""
+    clip count, and for a stale frame that names the element it left stale,
+    everything but its surface and that element: how the frame caught it (the
+    reason) and where its first pixel sat against the clips vary from walk to
+    walk for one defect (the acceptance run's planted stale status segment was
+    seven signatures). For reading the ledger, not for deduplication."""
     if kind in ("data", "undo"):
         return _FAMILY_FILE.sub(lambda m: f"{m.group(1)} <file> {m.group(3)}", label)
     if kind == "leak":
         return label.split(" over the run", 1)[0]
     stale = _FAMILY_STALE.match(label)
     if stale:
+        context = (stale.group(1) or "").strip()[1:-1].split("|")
+        if len(context) == 4 and context[3] not in ("", "-"):
+            return f"log: [{context[0]}|{context[3]}] QA-STALE"
         return f"log: {stale.group(1) or ''}QA-STALE {stale.group(2)}"
     return label
 
@@ -2881,12 +2888,13 @@ def exposure_progress(entry: ld.Entry) -> str:
     return f"{quiet.expected:.1f} of {ex.VERIFIED_EXPECTED} due ({quiet.runs} runs)"
 
 
-def open_families(entries) -> list[tuple[str, list[ld.Entry]]]:
-    """The open, still-showing severe and behaviour findings grouped by family
-    (family), most sightings first."""
+def open_families(entries, paint: bool = False) -> list[tuple[str, list[ld.Entry]]]:
+    """The open, still-showing severe and behaviour findings, or with `paint`
+    the stale-paint ones, grouped by family (family), most sightings first."""
     groups: dict[str, list[ld.Entry]] = {}
     for entry in entries:
-        if entry.status in ("new", "reopened") and impact_tier(entry) <= 1 and not is_quiet(entry):
+        wanted = impact_tier(entry) == 3 if paint else impact_tier(entry) <= 1
+        if entry.status in ("new", "reopened") and wanted and not is_quiet(entry):
             groups.setdefault(family(entry.kind, entry.label), []).append(entry)
     return sorted(groups.items(), key=lambda item: -sum(e.count for e in item[1]))
 
@@ -3021,10 +3029,13 @@ def cmd_status(args: argparse.Namespace) -> int:
         print(f"fixed, waiting for exposure (no replay reproduces them): {len(waiting)}")
         for entry in sorted(waiting, key=priority_key)[:8]:
             print(f"    {entry.sig} {exposure_progress(entry):28} {entry.label[:80]}")
-    families = open_families(entries.values())
-    if families:
-        print("open families the soak still shows (severe and behaviour; one defect is often many signatures):")
-        for name, members in families[:10]:
+    for heading, families, shown in (
+            ("open families the soak still shows (severe and behaviour; one defect is often many signatures):",
+             open_families(entries.values()), 10),
+            ("open stale-paint families:", open_families(entries.values(), paint=True), 5)):
+        if families:
+            print(heading)
+        for name, members in families[:shown]:
             recorded = sum(has_recording(FINDINGS / e.sig) for e in members)
             print(f"    x{sum(e.count for e in members):<5} {len(members):3} sig(s) {name[:92]}"
                   + (f" [rr x{recorded}]" if recorded else ""))

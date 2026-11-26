@@ -34,6 +34,19 @@ class CellTests(unittest.TestCase):
         self.assertLess(share, 0.06)
 
 
+class FamilyTests(unittest.TestCase):
+    def test_stale_paint_is_its_own_family_listing(self):
+        stale = [entry(sig, "log", f"log: [statusBar|{rel}|area|status:line-column] QA-STALE frame=<n> reason={why}",
+                       count=n)
+                 for sig, rel, why, n in (("s1", "outside", "prepared", 900), ("s2", "clip-edge", "prepared", 3),
+                                          ("s3", "outside", "render-settle", 4))]
+        crash = entry("c", "crash", "crash: SIGSEGV")
+        self.assertEqual([name for name, _ in soak.open_families(stale + [crash])], ["crash: SIGSEGV"])
+        paint = soak.open_families(stale + [crash], paint=True)
+        self.assertEqual(len(paint), 1)
+        self.assertEqual({e.sig for e in paint[0][1]}, {"s1", "s2", "s3"})
+
+
 class PriorityTests(unittest.TestCase):
     def test_severity_leads(self):
         stale = entry("a", "log", "log: QA-STALE frame=<n>", count=900, deterministic=True)
