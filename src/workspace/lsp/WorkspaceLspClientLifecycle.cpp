@@ -363,13 +363,10 @@ void LspClient::Impl::DoInitializeBlocking() {
 
   bool initialized_send_failed = false;
   {
+    std::lock_guard wlock(write_mutex);
     std::lock_guard lock(send_mutex);
-    bool sent_initialized = false;
-    {
-      std::lock_guard wlock(write_mutex);
-      sent_initialized = proc.Write(
-          SerializeMessage(MakeNotification("initialized", JsonValue(JsonObject{}))));
-    }
+    const bool sent_initialized =
+        proc.Write(SerializeMessage(MakeNotification("initialized", JsonValue(JsonObject{}))));
     if (!sent_initialized) {
       SetLastError("failed to send initialized notification to language server");
       deferred_messages.clear();
