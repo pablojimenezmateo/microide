@@ -274,6 +274,51 @@ class BinaryPruneTests(unittest.TestCase):
         self.assertFalse(unused.parent.exists(), "nothing started on it for six hours")
 
 
+class BinaryInUseTests(unittest.TestCase):
+    """2026-11-26: 11 GB of the soak's 20 under a 15 GB budget were superseded
+    builds' binaries, kept two hours after a job last started on them, five
+    builds deep on a day of pushes -- while a three-hour check could still lose
+    its binary to the same rule. What runs a build is a live process naming it."""
+
+    def _binary(self, soak, sha: str, age_s: float) -> Path:
+        binary = soak.SOAK / "bin" / "default" / sha / "microide"
+        binary.parent.mkdir(parents=True)
+        binary.write_text("")
+        then = time.time() - age_s
+        os.utime(binary.parent, (then, then))
+        return binary
+
+    def test_a_superseded_build_goes_once_no_live_process_names_it(self):
+        soak = scratch_soak(self)
+        checked = self._binary(soak, "aaaaaaaaaaaa", 7 * 3600)
+        idle = self._binary(soak, "bbbbbbbbbbbb", 20 * 60)
+        starting = self._binary(soak, "dddddddddddd", 5 * 60)
+        current = self._binary(soak, "cccccccccccc", 9 * 3600)
+        names = b"\0".join((b"python3", b"run.py", b"--binary", bytes(checked), b"replay", b"/usr/bin/bash"))
+        with mock.patch.object(soak, "live_process_names", return_value=names):
+            soak.prune_binaries({"default": {"sha": "c" * 40, "binary": str(current)}})
+        self.assertTrue(checked.exists(), "a check started seven hours ago still runs it")
+        self.assertFalse(idle.parent.exists(), "superseded, and nothing runs it")
+        self.assertTrue(starting.exists(), "a job started on it minutes ago may not have spawned yet")
+        self.assertTrue(current.exists(), "the current build stays")
+
+    def test_a_directory_whose_name_extends_a_named_one_is_not_kept_by_it(self):
+        soak = scratch_soak(self)
+        named = self._binary(soak, "aaaaaaaaaaaa", 3600)
+        sibling = self._binary(soak, "aaaaaaaaaaa", 3600)
+        names = bytes(named)
+        with mock.patch.object(soak, "live_process_names", return_value=names):
+            soak.prune_binaries({})
+        self.assertTrue(named.exists())
+        self.assertFalse(sibling.parent.exists(), "a prefix of a named directory is another build")
+
+    def test_live_process_names_holds_this_process_command_line_and_executable(self):
+        soak = scratch_soak(self)
+        names = soak.live_process_names()
+        self.assertIn(os.readlink("/proc/self/exe").encode(), names)
+        self.assertIn(Path("/proc/self/cmdline").read_bytes().rstrip(b"\0"), names)
+
+
 class DeadJobEvidenceTests(unittest.TestCase):
     def test_a_dead_job_says_how_it_ended_and_how_loaded_the_machine_was(self):
         # Soak dd0052b5e422: hard timeout, driver.log empty, nothing to act on.

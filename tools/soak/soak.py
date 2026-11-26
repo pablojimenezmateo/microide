@@ -379,7 +379,8 @@ def driver_root(state: dict[str, Any]) -> Path:
 
 def mark_in_use(path: Path) -> None:
     """Dates `path` -- a binary's directory or a driver snapshot -- to now: a job
-    starts on it. The prunes below keep anything used in the last six hours. They
+    starts on it. The prunes below keep what a job started on lately (prune_drivers
+    for six hours; prune_binaries for minutes, then while a process names it). They
     went by the directory's own date, which is when it was MADE, so a binary that
     served past six hours went the moment the next build replaced it, under the
     jobs still running it: they died at their next relaunch with "No such file"
@@ -429,15 +430,36 @@ def refresh_due(state: dict[str, Any]) -> bool:
     return not is_built(state, followed_head()) or any(True for _ in fixes_to_verify(state))
 
 
-BINARY_IDLE_SECONDS = 2 * 3600
+# A job's binary is marked (mark_in_use) just before its driver spawns: until
+# then no process names it.
+BINARY_GRACE_SECONDS = 15 * 60
+
+
+def live_process_names() -> bytes:
+    """Every live process's command line and executable, NUL-separated: a job's,
+    a check's or a hunt's driver names its build with `--binary`, and the app it
+    runs is that build's executable."""
+    parts = []
+    for proc in Path("/proc").glob("[0-9]*"):
+        with contextlib.suppress(OSError):
+            parts.append((proc / "cmdline").read_bytes())
+        with contextlib.suppress(OSError):
+            parts.append(os.readlink(proc / "exe").encode())
+    return b"\0".join(parts)
 
 
 def prune_binaries(good: dict[str, Any]) -> None:
-    """Binaries no job has started on for BINARY_IDLE_SECONDS (mark_in_use; the
-    longest job runs 70 minutes), never the current ones."""
+    """A superseded build's binaries once no live process names them -- a check
+    runs three hours, so no idle time is safe -- and no job has started on them
+    for BINARY_GRACE_SECONDS. Never the current ones."""
     keep = {Path(entry["binary"]).parent for entry in good.values()}
+    names: bytes | None = None
     for build_dir in (SOAK / "bin").glob("*/*"):
-        if build_dir not in keep and time.time() - build_dir.stat().st_mtime > BINARY_IDLE_SECONDS:
+        if build_dir in keep or time.time() - build_dir.stat().st_mtime <= BINARY_GRACE_SECONDS:
+            continue
+        if names is None:
+            names = live_process_names()
+        if bytes(build_dir) + b"/" not in names:
             shutil.rmtree(build_dir, ignore_errors=True)
 
 
@@ -1705,7 +1727,8 @@ def check_binary(meta: dict[str, Any], state: dict[str, Any]) -> tuple[str | Non
     build that found it while the runner still has it, else the newest good
     build of the same configuration; (None, "") when there is neither.
 
-    A build's binary goes six hours after the next one (prune_binaries), and a
+    A build's binary goes once the next one replaced it and no process runs it
+    (prune_binaries), and a
     check named the finding's own and nothing else. Every check of a finding
     older than that -- all of the open ones, the day replays learned to say
     whether they followed the run and the old rates were queued to be measured
