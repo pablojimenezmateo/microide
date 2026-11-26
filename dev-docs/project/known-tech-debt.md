@@ -128,6 +128,12 @@ splits "no replay reproduces" by it). Open, in the order they would pay:
      with no settle in between (App.settled_since_record), and the replay sends
      such rows back to back, as it does a burst. A 120-step run: 57 of 226 rows
      marked, and its replay followed the run's path.
+   - **The QA driver itself aborted once, in CI (2026-11-26):** `run.py suite
+     --jobs 4` died on glibc's `malloc_consolidate(): invalid chunk size` (run
+     45772974278; once in the 25 `checks` runs before it). The driver's in-process
+     Xlib already calls XInitThreads first; with no core and no stack the cause is
+     unknown. `run.py` now enables faulthandler for every thread, so the next one
+     names the thread and the call.
    - **A lane's seeded monkey is a gate on a moving walk.** Any change to what
      the monkey can do re-rolls what seed 1 does; the lanes now keep a real-size
      window, and `qa-scale`'s layout seed 2 at 1.25 still meets a stale 1x8 px

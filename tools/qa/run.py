@@ -23,6 +23,7 @@ from __future__ import annotations
 import argparse
 import concurrent.futures
 import contextlib
+import faulthandler
 import fnmatch
 import json
 import os
@@ -41,6 +42,11 @@ import scenarios as s  # noqa: E402
 import invariants as inv  # noqa: E402
 import monkey_model as mm  # noqa: E402
 import remote_host as rh  # noqa: E402
+
+# A fatal signal in the driver itself prints every thread's Python stack: CI's qa
+# job once ended in glibc's "malloc_consolidate(): invalid chunk size" abort of
+# `run.py suite --jobs 4` with nothing to say which thread or call hit it.
+faulthandler.enable(all_threads=True)
 
 REQUIRED_TOOLS = ("Xvfb", "xdotool", "xwd", "xdpyinfo", "xmodmap")
 
