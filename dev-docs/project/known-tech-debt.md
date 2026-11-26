@@ -205,7 +205,12 @@ splits "no replay reproduces" by it). Open, in the order they would pay:
    - **A lane's seeded monkey is a gate on a moving walk.** Any change to what
      the monkey can do re-rolls what seed 1 does; the lanes now keep a real-size
      window, and `qa-scale`'s layout seed 2 at 1.25 still meets a stale 1x8 px
-     line at ui.scale 1.1 (an app paint defect).
+     line at ui.scale 1.1 (an app paint defect). 2026-11-26: that seed at 1.25 now met a
+     terminal row painted 1.6 px past its pane into the status bar (clip rects
+     snap outward to device pixels, so a row that did not fit painted where no
+     damage reached); fixed in 699dd0265, rows and caret are laid out only when
+     they fit. Whether the 1.1 line was the same defect is not yet confirmed: the
+     next qa-scale run says.
 
 ### TD-2026-11-08-435 — the safety program's first pass: what landed, what it found, and what it left. [OPEN]
 
