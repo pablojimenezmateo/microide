@@ -553,6 +553,15 @@
   static void ConsumeProjectSearchUpdates(WorkspaceShell& shell) {
     shell.ConsumeProjectSearchUpdates();
   }
+  static void CatchUpSearchResults(WorkspaceShell& shell) {
+    if (const editor::TextViewport* viewport = shell.ActiveEditorViewport(); viewport != nullptr) {
+      shell.MakeSidebarService().CatchUpSearchResults(*viewport);
+    }
+  }
+  static void SettleLiveSearchHits(WorkspaceShell& shell) {
+    shell.project_search_runtime_.WaitForLiveHitsIdle();
+    shell.ConsumeProjectSearchUpdates();
+  }
   static void ToggleProjectSearchPatternMode(WorkspaceShell& shell) {
     shell.ToggleProjectSearchPatternMode();
   }

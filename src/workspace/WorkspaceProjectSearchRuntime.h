@@ -9,6 +9,9 @@
 #include <vector>
 
 #include "project/ProjectSearchService.h"
+#include "util/MainThreadMailbox.h"
+#include "util/TaskExecutor.h"
+#include "workspace/ProjectSearchLiveHits.h"
 
 namespace microide::workspace {
 
@@ -30,11 +33,18 @@ class WorkspaceProjectSearchRuntime {
   bool WorkerFinished() const { return service_.WorkerFinished(); }
   void WaitForWorkersIdle() { service_.WaitForWorkersIdle(); }
 
+  void SearchDocument(LiveHitsRequest request);
+  std::vector<LiveHits> TakeLiveHits();
+  void WaitForLiveHitsIdle() { live_hits_executor_.WaitForIdle(); }
+
  private:
   project::ProjectSearchService service_;
+  util::MainThreadMailbox live_hits_mailbox_;
+  std::vector<LiveHits> live_hits_;
   Uint32 event_type_ = 0;
   std::uint64_t active_run_id_ = 0;
   std::uint64_t active_search_id_ = 0;
+  util::TaskExecutor live_hits_executor_{1};
 };
 
 }

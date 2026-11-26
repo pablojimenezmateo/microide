@@ -220,15 +220,14 @@ void SidebarCoordinator::RefreshGit() {
   ApplyGitSnapshotKeepingSelection(std::move(snapshot), previous);
 }
 
-bool SidebarCoordinator::CatchUpSearchResults(const editor::TextViewport& viewport) {
-  ProjectSearchState& search = state_.overlay.workflow.project_search;
-  if (!state_.sidebar.visible || ActiveSidebarMode() != SidebarMode::Search ||
-      !RederiveProjectSearchHitsIfStale(search, state_.root, viewport,
-                                        SearchCandidatesFrom(state_.file_index, search))) {
-    return false;
+void SidebarCoordinator::CatchUpSearchResults(const editor::TextViewport& viewport) {
+  if (!state_.sidebar.visible || ActiveSidebarMode() != SidebarMode::Search) {
+    return;
   }
-  operations_.request_frame();
-  return true;
+  if (std::optional<LiveHitsRequest> request =
+          LiveHitsRequestIfStale(state_.overlay.workflow.project_search, state_.root, viewport)) {
+    operations_.search_document(std::move(*request));
+  }
 }
 
 bool SidebarCoordinator::RefreshProblems() {

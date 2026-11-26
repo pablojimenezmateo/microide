@@ -6144,8 +6144,10 @@ void TestSearchResultsCaughtUpAtFramePrepRepaintTheirCount() {
   editor.MoveCursorTo(0, 0);
   editor.InsertText("alpha ");
   const SDL_FRect editor_surface = TestAccess::CurrentLayout(fixture.shell).editor_surface;
+  TestAccess::CatchUpSearchResults(fixture.shell);
+  TestAccess::SettleLiveSearchHits(fixture.shell);
   fixture.ExpectFresh(workspace::RenderInvalidation{.full = false, .rects = {editor_surface}},
-                      "a frame that catches the search results up with an edit");
+                      "a frame that shows an edit and the search results caught up with it");
   Expect(TestAccess::ProjectSearchResults(fixture.shell).size() == 3,
          "the results followed the edit (a third alpha)");
 }
@@ -8755,6 +8757,8 @@ void TestTheSearchPanelRepaintsWhatChangedFromAFrame() {
     editor.MoveCursorTo(0, std::string("alpha line 0 with beta").size());
     editor.InsertText(" and more");
     const SDL_FRect editor_surface = TestAccess::CurrentLayout(fixture.shell).editor_surface;
+    TestAccess::CatchUpSearchResults(fixture.shell);
+    TestAccess::SettleLiveSearchHits(fixture.shell);
     fixture.ExpectFresh(workspace::RenderInvalidation{.full = false, .rects = {editor_surface}},
                         "a hit's preview following an edit of its line");
   }

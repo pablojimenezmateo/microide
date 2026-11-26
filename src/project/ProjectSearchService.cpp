@@ -170,31 +170,40 @@ ProjectSearchResult MakeProjectSearchResult(std::string_view line,
   };
 }
 
+LineSearch::LineSearch(const ProjectSearchMatcher& matcher, std::string relative_path_string,
+                       std::size_t file_index, std::size_t max_results)
+    : scanner_(matcher.NewScanner()),
+      relative_path_string_(std::move(relative_path_string)),
+      file_index_(file_index),
+      max_results_(matcher.valid() ? max_results : 0) {}
+
+void LineSearch::Add(std::string_view line) {
+  static const std::atomic_bool kNeverCancelled{false};
+  const std::size_t line_index = line_index_++;
+  if (full()) {
+    return;
+  }
+  scanner_.BeginLine(line);
+  std::size_t search_from = 0;
+  std::size_t match_start = 0;
+  std::size_t match_end = 0;
+  while (!full() && scanner_.Next(line, &search_from, &match_start, &match_end, kNeverCancelled)) {
+    results_.push_back(
+        MakeProjectSearchResult(line, match_start, match_end, relative_path_string_, file_index_, line_index));
+  }
+}
+
 std::vector<ProjectSearchResult> SearchLines(const ProjectSearchMatcher& matcher,
                                              std::size_t line_count,
                                              const std::function<std::string_view(std::size_t)>& line_at,
                                              const std::string& relative_path_string,
                                              std::size_t file_index,
                                              std::size_t max_results) {
-  std::vector<ProjectSearchResult> results;
-  if (!matcher.valid()) {
-    return results;
+  LineSearch search(matcher, relative_path_string, file_index, max_results);
+  for (std::size_t line_index = 0; line_index < line_count && !search.full(); ++line_index) {
+    search.Add(line_at(line_index));
   }
-  static const std::atomic_bool kNeverCancelled{false};
-  ProjectSearchMatcher::Scanner scanner = matcher.NewScanner();
-  for (std::size_t line_index = 0; line_index < line_count && results.size() < max_results; ++line_index) {
-    const std::string_view line = line_at(line_index);
-    scanner.BeginLine(line);
-    std::size_t search_from = 0;
-    std::size_t match_start = 0;
-    std::size_t match_end = 0;
-    while (results.size() < max_results &&
-           scanner.Next(line, &search_from, &match_start, &match_end, kNeverCancelled)) {
-      results.push_back(
-          MakeProjectSearchResult(line, match_start, match_end, relative_path_string, file_index, line_index));
-    }
-  }
-  return results;
+  return search.Take();
 }
 
 ProjectSearchService::~ProjectSearchService() {

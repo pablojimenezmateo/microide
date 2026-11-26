@@ -42,6 +42,7 @@ inline bool WaitForProjectSearchResults(workspace::WorkspaceShell& shell,
 inline void WaitForProjectSearch(workspace::WorkspaceShell& shell) {
   Expect(WaitForProjectSearchCompletion(shell, std::chrono::seconds(2)),
          "workspace project search should finish");
+  workspace::WorkspaceShell::TestAccess::SettleLiveSearchHits(shell);
 }
 
 }

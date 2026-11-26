@@ -13,28 +13,46 @@
 
 namespace microide::workspace {
 
-bool RederiveProjectSearchHits(ProjectSearchState& search,
-                               const std::filesystem::path& root,
-                               const editor::TextViewport& viewport,
-                               const ProjectSearchCandidates& candidates) {
+std::optional<LiveHitsRequest> PrepareLiveHitsRequest(const ProjectSearchState& search,
+                                                      const std::filesystem::path& root,
+                                                      const editor::TextViewport& viewport) {
   if (search.running || search.run_query.empty() || root.empty() || viewport.path().empty()) {
-    return false;
+    return std::nullopt;
   }
   const std::filesystem::path relative = viewport.path().lexically_normal().lexically_relative(root.lexically_normal());
   if (relative.empty() || util::RelativePathClimbsOut(relative)) {
-    return false;
+    return std::nullopt;
   }
-  const std::string relative_path = relative.generic_string();
+  std::string relative_path = relative.generic_string();
   const project::GlobSet include = project::GlobSet::Parse(search.run_options.include_globs);
   const project::GlobSet exclude = project::GlobSet::Parse(search.run_options.exclude_globs);
   if ((!include.empty() && !include.Matches(relative_path)) || (!exclude.empty() && exclude.Matches(relative_path))) {
-    return false;
+    return std::nullopt;
   }
-  const project::ProjectSearchMatcher matcher(search.run_query, search.run_options);
-  if (!matcher.valid()) {
-    return false;
+  if (!project::ProjectSearchMatcher(search.run_query, search.run_options).valid()) {
+    return std::nullopt;
   }
+  return LiveHitsRequest{.key = {.document = viewport.document_identity(),
+                                 .content_revision = viewport.content_revision(),
+                                 .relative_path = std::move(relative_path),
+                                 .query = search.run_query,
+                                 .options = search.run_options},
+                         .text = viewport.lines().SnapshotDocument()};
+}
 
+LiveHits SearchLiveHits(const LiveHitsRequest& request) {
+  const project::ProjectSearchMatcher matcher(request.key.query, request.key.options);
+  project::LineSearch search(matcher, request.key.relative_path, 0, project::kMaxProjectSearchResults);
+  request.text.ForEachLine([&search](std::string_view line) { search.Add(line); });
+  return LiveHits{.key = request.key, .hits = search.Take()};
+}
+
+bool SpliceLiveHits(ProjectSearchState& search, LiveHits live, const ProjectSearchCandidates& candidates) {
+  if (search.running || search.run_query != live.key.query || search.run_options != live.key.options) {
+    return false;
+  }
+  const std::string& relative_path = live.key.relative_path;
+  std::vector<project::ProjectSearchResult>& hits = live.hits;
   auto& results = search.results;
   auto first = std::find_if(results.begin(), results.end(), [&](const project::ProjectSearchResult& hit) {
     return hit.relative_path_string == relative_path;
@@ -42,11 +60,10 @@ bool RederiveProjectSearchHits(ProjectSearchState& search,
   std::optional<std::size_t> file_index;
   if (first != results.end()) {
     file_index = first->file_index;
+    for (project::ProjectSearchResult& hit : hits) {
+      hit.file_index = *file_index;
+    }
   }
-  const editor::TextBuffer& lines = viewport.lines();
-  std::vector<project::ProjectSearchResult> hits = project::SearchLines(
-      matcher, lines.LineCount(), [&lines](std::size_t i) { return lines.LineView(i); }, relative_path,
-      file_index.value_or(0), project::kMaxProjectSearchResults);
   if (!file_index.has_value()) {
     if (hits.empty()) {
       return false;
@@ -111,17 +128,16 @@ ProjectSearchCandidates SearchCandidatesFrom(const project::FileIndex& index, co
   };
 }
 
-bool RederiveProjectSearchHitsIfStale(ProjectSearchState& search,
-                                      const std::filesystem::path& root,
-                                      const editor::TextViewport& viewport,
-                                      const ProjectSearchCandidates& candidates) {
+std::optional<LiveHitsRequest> LiveHitsRequestIfStale(ProjectSearchState& search,
+                                                      const std::filesystem::path& root,
+                                                      const editor::TextViewport& viewport) {
   if (search.live_hits_document == viewport.document_identity() &&
       search.live_hits_content_revision == viewport.content_revision()) {
-    return false;
+    return std::nullopt;
   }
   search.live_hits_document = viewport.document_identity();
   search.live_hits_content_revision = viewport.content_revision();
-  return RederiveProjectSearchHits(search, root, viewport, candidates);
+  return PrepareLiveHitsRequest(search, root, viewport);
 }
 
 }

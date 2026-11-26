@@ -282,6 +282,8 @@ SidebarCoordinator WorkspaceShell::MakeSidebarCoordinator() {
                 return consumed;
               },
           .refresh_project_search = [this]() { RefreshProjectSearch(); },
+          .search_document =
+              [this](LiveHitsRequest request) { project_search_runtime_.SearchDocument(std::move(request)); },
           .request_file_index_refresh = [this]() { RequestFileIndexRefresh(); },
           .open_file = [this](const std::filesystem::path& path) { OpenFile(path); },
           .active_editor_viewport = [this]() { return ActiveEditorViewport(); },

@@ -17,6 +17,7 @@
 #include "workspace/state/WorkspacePromptState.h"
 #include "workspace/git/GitSidebarCommandCenter.h"
 #include "workspace/state/WorkspaceSidebarState.h"
+#include "workspace/ProjectSearchLiveHits.h"
 
 namespace microide::workspace {
 
@@ -31,6 +32,7 @@ class SidebarCoordinator {
     std::function<void()> request_git_refresh;
     std::function<bool(GitSidebarState::RefreshSnapshot*)> consume_git_refresh_snapshot;
     std::function<void()> refresh_project_search;
+    std::function<void(LiveHitsRequest)> search_document;
     std::function<void()> request_file_index_refresh;
     std::function<void(const std::filesystem::path&)> open_file;
     std::function<editor::TextViewport*()> active_editor_viewport;
@@ -101,7 +103,7 @@ class SidebarCoordinator {
   void RefreshProjectFiles();
   void RefreshGit();
   bool RefreshProblems();
-  bool CatchUpSearchResults(const editor::TextViewport& viewport);
+  void CatchUpSearchResults(const editor::TextViewport& viewport);
   bool RefreshTests();
   bool RefreshPlugin();
   bool RefreshOutline();

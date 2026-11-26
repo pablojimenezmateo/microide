@@ -282,7 +282,7 @@ void WorkspaceShell::NoteActiveEditableEdit() {
     SyncLspForActiveEditableLastChange();
   }
   RefreshBufferSearchIfStale();
-  (void)MakeSidebarService().CatchUpSearchResults(*viewport);
+  MakeSidebarService().CatchUpSearchResults(*viewport);
   assist_service_.snippets().NotifyBufferChanged();
   (void)debug_service_.ShiftBreakpointsForViewportEdit(*viewport);
 }

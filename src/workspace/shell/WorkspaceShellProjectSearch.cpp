@@ -406,6 +406,19 @@ void WorkspaceShell::StopProjectSearch() {
 }
 
 void WorkspaceShell::ConsumeProjectSearchUpdates() {
+  ProjectSearchState& live_search = context_.current_project_state.overlay.workflow.project_search;
+  for (LiveHits& live : project_search_runtime_.TakeLiveHits()) {
+    const bool current = std::ranges::any_of(context_.current_project_state.editor_groups, [&](const EditorGroup& group) {
+      return std::ranges::any_of(group.open_tabs, [&](const TabEntry& tab) {
+        return tab.editor_state.has_value() && tab.editor_state->viewport.document_identity() == live.key.document &&
+               tab.editor_state->viewport.content_revision() == live.key.content_revision;
+      });
+    });
+    if (current && SpliceLiveHits(live_search, std::move(live),
+                                  SearchCandidatesFrom(context_.current_project_state.file_index, live_search))) {
+      RequestPreparedFrame();
+    }
+  }
   const std::optional<project::ProjectSearchUpdate> maybe_update =
       project_search_runtime_.ConsumeActiveUpdate();
   if (!maybe_update.has_value()) {
@@ -441,8 +454,10 @@ void WorkspaceShell::ConsumeProjectSearchUpdates() {
     for (const EditorGroup& group : context_.current_project_state.editor_groups) {
       for (const TabEntry& tab : group.open_tabs) {
         if (tab.editor_state.has_value() && tab.editor_state->viewport.dirty()) {
-          (void)RederiveProjectSearchHits(search, context_.current_project_state.root, tab.editor_state->viewport,
-                                          SearchCandidatesFrom(context_.current_project_state.file_index, search));
+          if (std::optional<LiveHitsRequest> request =
+                  PrepareLiveHitsRequest(search, context_.current_project_state.root, tab.editor_state->viewport)) {
+            project_search_runtime_.SearchDocument(std::move(*request));
+          }
         }
       }
     }

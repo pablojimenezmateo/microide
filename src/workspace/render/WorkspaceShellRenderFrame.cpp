@@ -424,7 +424,7 @@ void WorkspaceShell::PrepareFrameState(FramePrepPass& pass) {
     MakeTextInputCoordinator().SyncTextInputSurface(render_window);
   }
   if (const editor::TextViewport* viewport = ActiveEditorViewport(); viewport != nullptr) {
-    (void)MakeSidebarService().CatchUpSearchResults(*viewport);
+    MakeSidebarService().CatchUpSearchResults(*viewport);
   }
   const RenderViewModelBuilder view_models(context_);
   {

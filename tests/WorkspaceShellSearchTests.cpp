@@ -1055,18 +1055,21 @@ void TestWorkspaceShellProjectSearchHitsFollowEdits() {
   WorkspaceShellTestAccess::SetFocusEditor(shell);
   WorkspaceShellTestAccess::ActiveEditor(shell).MoveCursorTo(0, 0);
   Expect(SendKeyDown(shell, SDLK_RETURN, SDL_KMOD_NONE), "Enter should insert a line above the hits");
+  WorkspaceShellTestAccess::SettleLiveSearchHits(shell);
   Expect(lines_of("notes.txt") == std::vector<std::size_t>{1, 2},
          "a line inserted above moves the hits down with their text");
   Expect(lines_of("other.txt") == std::vector<std::size_t>{0}, "another file's hits stay as they were");
 
   WorkspaceShellTestAccess::ActiveEditor(shell).MoveCursorTo(0, 0);
   Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "alpha"), "typing should be handled");
+  WorkspaceShellTestAccess::SettleLiveSearchHits(shell);
   Expect(lines_of("notes.txt") == std::vector<std::size_t>{0, 1, 2}, "a match typed in adds a hit");
 
   WorkspaceShellTestAccess::OpenFile(shell, root / "zeta.txt");
   WorkspaceShellTestAccess::SetFocusEditor(shell);
   WorkspaceShellTestAccess::ActiveEditor(shell).MoveCursorTo(0, 0);
   Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "alpha "), "typing should be handled");
+  WorkspaceShellTestAccess::SettleLiveSearchHits(shell);
   Expect(lines_of("zeta.txt") == std::vector<std::size_t>{0}, "a file gaining its first match gets a hit");
   Expect(WorkspaceShellTestAccess::ProjectSearchResults(shell).back().relative_path_string == "zeta.txt",
          "and it sits where the search orders it, after the files before it");
@@ -1075,6 +1078,42 @@ void TestWorkspaceShellProjectSearchHitsFollowEdits() {
   WaitForProjectSearch(shell);
   Expect(lines_of("notes.txt") == std::vector<std::size_t>{2},
          "the dirty buffer is searched as it stands (beta is on line 3 there, line 2 on disk)");
+}
+
+void TestWorkspaceShellProjectSearchHitsOfABigFileFollowOffTheMainThread() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "workspace";
+  const std::filesystem::path source = root / "big.txt";
+  std::string text;
+  for (std::size_t line = 0; text.size() < 16u * 1024u * 1024u; ++line) {
+    text += "lorem ipsum dolor sit amet " + std::to_string(line) + "\n";
+  }
+  text += "alpha at the end\n";
+  WriteFile(source, text);
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+  WorkspaceShellTestAccess::FlushPendingFileReads(shell);
+  Expect(WorkspaceShellTestAccess::ActiveEditor(shell).line_count() > 100000, "the big file is loaded");
+  WorkspaceShellTestAccess::ShowSearchSidebar(shell, "alpha", false);
+  WaitForProjectSearch(shell);
+  Expect(WorkspaceShellTestAccess::ProjectSearchResults(shell).size() == 1, "the search finds the one alpha");
+
+  WorkspaceShellTestAccess::SetFocusEditor(shell);
+  WorkspaceShellTestAccess::ActiveEditor(shell).MoveCursorTo(0, 0);
+  const auto started = std::chrono::steady_clock::now();
+  Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "alpha "), "typing should be handled");
+  WorkspaceShellTestAccess::CatchUpSearchResults(shell);
+  const auto took = std::chrono::steady_clock::now() - started;
+  const auto bound = std::chrono::milliseconds(IsSanitizerBuild() ? 400 : 100);
+  Expect(took < bound,
+         "an edit of a 16 MB file and the hits' catch-up search it off the main thread, took " +
+             std::to_string(std::chrono::duration_cast<std::chrono::milliseconds>(took).count()) + " ms");
+  WorkspaceShellTestAccess::SettleLiveSearchHits(shell);
+  Expect(WorkspaceShellTestAccess::ProjectSearchResults(shell).size() == 2,
+         "and the typed alpha joins the hits when that search lands");
 }
 
 void TestWorkspaceShellBufferFindInSelectionRegexReplace() {
@@ -1719,6 +1758,8 @@ void RegisterWorkspaceShellSearchTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellBufferFindInSelectionScopesMatchesAndReplace);
   AddTest(tests, "BufferFindScope/FollowsEdits", TestBufferFindScopeFollowsEdits);
   AddTest(tests, "WorkspaceShell/ProjectSearchHitsFollowEdits", TestWorkspaceShellProjectSearchHitsFollowEdits);
+  AddTest(tests, "WorkspaceShell/ProjectSearchHitsOfABigFileFollowOffTheMainThread",
+          TestWorkspaceShellProjectSearchHitsOfABigFileFollowOffTheMainThread);
   AddTest(tests, "WorkspaceShell/BufferFindInSelectionRegexReplace",
           TestWorkspaceShellBufferFindInSelectionRegexReplace);
   AddTest(tests, "WorkspaceShell/ProjectSearchSidebarScrollPastSelection",

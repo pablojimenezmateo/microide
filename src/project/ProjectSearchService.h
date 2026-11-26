@@ -41,6 +41,8 @@ struct ProjectSearchOptions {
   bool count_all_matches = false;
   std::string include_globs;
   std::string exclude_globs;
+
+  bool operator==(const ProjectSearchOptions&) const = default;
 };
 
 struct ProjectSearchResult {
@@ -110,6 +112,24 @@ ProjectSearchResult MakeProjectSearchResult(std::string_view line,
                                             const std::string& relative_path_string,
                                             std::size_t file_index,
                                             std::size_t line_index);
+
+class LineSearch {
+ public:
+  LineSearch(const ProjectSearchMatcher& matcher, std::string relative_path_string, std::size_t file_index,
+             std::size_t max_results);
+
+  void Add(std::string_view line);
+  [[nodiscard]] bool full() const { return results_.size() >= max_results_; }
+  [[nodiscard]] std::vector<ProjectSearchResult> Take() { return std::move(results_); }
+
+ private:
+  ProjectSearchMatcher::Scanner scanner_;
+  std::string relative_path_string_;
+  std::size_t file_index_ = 0;
+  std::size_t max_results_ = 0;
+  std::size_t line_index_ = 0;
+  std::vector<ProjectSearchResult> results_;
+};
 
 std::vector<ProjectSearchResult> SearchLines(const ProjectSearchMatcher& matcher,
                                              std::size_t line_count,
