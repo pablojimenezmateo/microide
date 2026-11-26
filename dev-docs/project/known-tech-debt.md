@@ -16,84 +16,6 @@ moved, verbatim, to `guidelines/tech-debt/archive/2026-11-08-resolved-debt-ledge
 
 ## Open items
 
-### TD-2026-11-24-456 — `WorkspaceShell` is still the god class; its wiring factories are the largest functions. [OPEN]
-
-A 2026-11-24 cleanup pass (duplication, long functions, facades, dead code; net
--2,100 lines) left these on purpose, because each needs a design decision rather
-than a mechanical change:
-
-- **The shell's surface.** ~1,000 `WorkspaceShell::` definitions across the
-  companion TUs and a 2,200-line `WorkspaceShellMembers.inc`. The declaration
-  budget keeps it from growing but also blocks splitting its long members
-  (`RenderSettingsOverlay` 318 lines, `HoveredTooltip` 300, `ControlUiDetails` 288,
-  `HandleScheduledWakeSources` 237, `ReplaceAllProjectSearchMatches` 225): a named
-  phase costs a declaration, so the code keeps lambdas instead. Moving a cluster off the shell needs the cluster's
-  reads as an interface first; for ControlUi* that is ~50 callbacks, which is the
-  next item's problem in another place.
-- **Operations structs of `std::function`.** `MakeActionContext` (604 lines),
-  `MakeKeyInputCoordinator` (375), `MakeRemoteHostService` (280) and the other
-  `Make*` factories wire hundreds of one-line lambdas back into the shell. The
-  hooks are now invoked through `util::InvokeIfSet`, but the shape stays: each
-  coordinator depends on a bag of shell callbacks rather than on the services it
-  uses. The fix is per coordinator: pass the services (`EditorTabService&`,
-  `PatchApplyService&`, ...) and delete the hooks that only forwarded to them.
-- **Deliberately kept long:** `ActionAvailability::IsEnabled` (one exhaustive
-  switch so `-Wswitch` makes each new action decide), and the spec tables
-  (`BuiltinKeybindingSpecs`, `BuiltinSettingSpecs`, `WorkspaceCommandSpecs`,
-  `WorkspaceMenuSpecs`, `BuildDefaults`), which are data.
-- **2026-11-25 pass.** 56 one-line shell forwarders to services were inlined into
-  their callers (Members.inc cap 1512 -> 1428); the action context holds
-  `CompareReviewService&` instead of seven forwarding hooks; dead code found by
-  linking every binary with `--gc-sections --print-gc-sections` (and functions
-  only their own tests called, `PatternCache` among them) is gone; comments were
-  removed tree-wide (CLAUDE.md: tool directives only). The cluster moves above
-  and the remaining `Make*` hooks, which call shell methods with real bodies
-  rather than services, are still open. To re-run the dead-code scan: a clang
-  build with `-ffunction-sections` and those linker flags, then the symbols every
-  link removed minus those `nm` finds in any binary.
-- **2026-11-25 second pass.** A window scan for near-duplicates (identifier-
-  preserving, literals normalized, 6-line windows) found ~60 real pairs past
-  the exact-clone scan; the substantive ones are folded (SDL surfaces own
-  through `render::SurfacePtr`, blame overlays, dirty prompts, folding model,
-  file watchers, terminal scroll/mouse, LSP didChange/formatting, compare/merge
-  mouse layout). The prescribed coordinator fix landed for the hook bags that
-  were mostly forwards: `KeyInputCoordinator` (58 hooks), `PanelMouse`,
-  `SidebarMouse`, `ChromeMouse`, `TabMouse` and `Lifecycle` coordinators now
-  hold a `Services` struct of references. `DebugPaneMouseCoordinator` keeps its
-  debug hooks on purpose: `DebugPaneTests` fake them to observe DAP focus
-  without a session. What remains of the factories is hooks into shell
-  methods with real bodies, which need those bodies moved to a service first.
-  The direction is now enforced: `CheckRedrawHooksAreRequestFrame` (no
-  per-surface redraw aliases; twenty were folded) and
-  `CheckFactoryHooksDoNotForwardToServices` (one-line service forwards counted
-  against a cap that ratchets DOWN, 43 after the lifecycle move). The long
-  members split without new declarations by moving their deterministic phases
-  to file-local free functions: `ReplaceAllProjectSearchMatches` 186 -> 84
-  lines, `HoveredTooltip` 259 -> 172, `ControlUiDetails`/`ControlUiButtons`
-  lost their repeated JSON and enum code and the compare section. What is left
-  on purpose: the 43 forwards sit in services whose hooks are optional
-  (`RemoteHostService` branches on a missing `recents_revision`), in classes
-  tests build with `{}` hooks (`TabCoordinator`), in the catalog/persistence/
-  terminal-panel ring where a lazy hook is what keeps their factories from
-  constructing each other recursively, or bind shell state into their
-  arguments; `ControlUiButtons`' merge section and `HandleScheduledWakeSources`
-  (a flat list of wake sources) need shell members and stay.
-- **2026-11-25, later:** `ControlUiDetails` 200 -> 115 lines (the hover popup,
-  the action receipt and each editor pane are file-local JSON builders).
-- **2026-11-25, later:** `HoveredTooltip` 172 -> 124 lines (its sidebar mode
-  row, panel header, debug toolbar and status bar lookups are file-local).
-- **2026-11-25, later:** `RenderSettingsOverlay` 284 -> 27 lines: its frame,
-  categories, section header, rows, controls and picker are file-local painters
-  over the prepared card (no new declaration).
-- **2026-11-25, later:** `ProjectCatalogService` takes a `Services` struct
-  (`PromptSurfaceService&`, `MenuCoordinator&`); neither factory builds another,
-  so they were not part of the factory ring. Cap 43 -> 41.
-- **Near-duplicates left in place:** the Lua wrappers in `PluginRuntimeApiInterop`
-  and `PluginHostLuaApi.inc` (their scoping is the longjmp-safety contract; fold
-  them only with `tools/audit-lua-longjmp.py` in the loop), and the compare
-  surface's `PaintCompareLeftSide` / `PaintCompareRightSide` (the right pane is
-  editable and paints carets, diagnostics and blame the left does not).
-
 ### TD-2026-11-16-452 — what the soak still cannot say about a finding, or reach. [OPEN]
 
 Left by the 2026-11-16 assessment of the soak (`tools/soak`) and the deep review
@@ -108,8 +30,12 @@ splits "no replay reproduces" by it). Open, in the order they would pay:
    name, stale-paint ones on the clip count: 1336 signatures for a few dozen
    defects. `soak.py` groups them into families for reading; the ledger still
    books a fix per signature.
-2. **The fault-injection jobs are not recorded.** rr cannot follow the remote
-   server (it runs under the loopback sshd, not under the app).
+2. **The fault-injection jobs are not recorded: WON'T DO (decided 2026-11-26).**
+   rr cannot follow the remote server (it runs under the loopback sshd, not under
+   the app), and recording the sshd's whole session tree would make every remote
+   job several times slower for findings the convergence oracle already names
+   with their replay; a remote finding is chased with its replay and the server's
+   log instead.
 3. **No write fails on purpose in the running app: the seam landed
    2026-11-25.** A crash-point rule can now fail a durable write with an errno
    (`fail=ENOSPC|EIO|EACCES|EROFS|EDQUOT|EXDEV|<n>:<site>[@<file>][#<nth>]`,
