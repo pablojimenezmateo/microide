@@ -146,8 +146,11 @@ splits "no replay reproduces" by it). Open, in the order they would pay:
    coverage --reset` drops the merged profile; the next coverage job starts it
    afresh. Carrying it stays the default (llvm-cov drops changed functions by
    hash), so reset after deleting much code.
-7. **Reach the review listed and did not build:** a scripted language server
-   that answers out of order (safety-plan W8); IME composition (DONE
+7. **Reach the review listed and did not build: all DONE by 2026-11-26.** A
+   scripted language server that answers out of order (safety-plan W8; DONE
+   2026-11-26: tools/qa/plugins/qa-chaos-lsp in the `tooling` profile, and a
+   debug adapter of the same kind, qa-chaos-dap, with `RequestsSettle` holding
+   every request ended -- TD-2026-11-08-435 item 5); IME composition (DONE
    2026-11-25: the `compose` control command sends SDL's text-editing events
    through the real input path, and the monkey's `ime` source composes,
    presses keys in between, then commits, cancels or leaves it in flight --
@@ -368,7 +371,7 @@ What it left, by workstream:
    versions), and the libFuzzer form of `ViewportEditSequenceFuzz`. The stateful
    multi-view unit sweep (`TextViewport/EditsThroughEveryViewKeepEveryViewsCachesTrue`)
    covers the viewport half with a fixed generator.
-5. **Monkey reach not built** (`tools/soak/surface-extra.toml` lists each with what
+5. **Monkey reach: DONE 2026-11-26.** Was: not built (`tools/soak/surface-extra.toml` lists each with what
    covers it instead). Reached since: clipboard from another application (the
    `external` source owns the X CLIPBOARD, `x_clipboard.py`), IME composition (the
    `compose` command and the `ime` source, 2026-11-25), a remote-project soak job
@@ -385,9 +388,15 @@ What it left, by workstream:
    tools/qa/plugins/qa-chaos-dap, a Python adapter for a pretend program, so rr
    records its sessions too; the same oracle on the `status` query's new
    `dapRequestsInFlight`; its first run found the debug toolbar on a compare's
-   Previous Change, f992ef5ff). Still not: multi-project switching (`project-open`
-   re-roots the session away from the scratch copy) and the 50 MB / submodule /
-   large-history / empty-folder fixtures.
+   Previous Change, f992ef5ff), and the project shapes the taskflow fixture
+   lacks (2026-11-26: the `external` source's `huge-file`, `empty-folder`,
+   `submodule` and `long-history` ops -- a 50 MB file it sometimes opens, nested
+   empty folders, a submodule added, moved, dirtied, deinitialized and brought
+   back, 3000 commits through fast-import), and multi-project switching
+   (2026-11-26: the `project` source opens a second scratch copy, a clone beside
+   the run's own, switches between the two and closes the second while the
+   first stays open; the data oracle already read every project's buffers).
+   Nothing in this item is left unreached.
 6. **DONE 2026-11-25:** `FrameLatency` reads each frame's prepare-and-paint
    time off the redraw trace (`elapsed=`) on every timed monkey step and files
    a frame over 0.5 s (slow factor applied) once per frame reason, the trace

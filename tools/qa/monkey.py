@@ -80,7 +80,8 @@ import x_clipboard as xc
 #   grep -oE 'ActionId::[A-Za-z]+, "[a-z0-9-]+"' \
 #       src/workspace/registries/WorkspaceCommandRegistry.cpp | sed 's/.*, "//;s/"//'
 # Deliberately excluded: `quit` (ends the run), `project-open`/`project-close`
-# (re-roots the session away from the scratch copy), and the `debug-`/`tests-`
+# (re-roots the session away from the scratch copy; the `project` source opens
+# and closes a second scratch copy instead), and the `debug-`/`tests-`
 # verbs that launch external processes. The default profile reads the live
 # catalogue instead (the `commands` query) and excludes FORBIDDEN_COMMANDS.
 MIXED_VERBS = """
@@ -481,7 +482,23 @@ EXTERNAL_OPS = ("rewrite", "append", "truncate", "crlf", "create-tree", "delete-
                 "rename-back", "chmod-ro", "chmod-none", "chmod-restore", "symlink", "symlink-loop",
                 "binary", "git-commit", "git-switch", "git-switch-back", "git-stash", "git-stash-pop",
                 "git-merge-conflict", "git-merge-abort", "git-checkout-file", "delete-file", "restore-file",
-                "git-worktree")
+                "git-worktree", "huge-file", "empty-folder", "submodule", "long-history")
+# The project shapes the taskflow fixture lacks, made by the ops of the same
+# names: a file this big (two slots, qa-big/), a submodule whose repository sits
+# beside the project, and a history this many commits deeper (once a project).
+BIG_FILE_BYTES = 50 * 1024 * 1024
+SUBMODULE_SOURCE = "qa-submodule-src"
+LONG_HISTORY_COMMITS = 3000
+# The `project` source's second project: a clone of the run's own beside it, so
+# opening, switching to and closing a project never leaves the scratch copies.
+SECOND_PROJECT = "qa-second-project"
+
+
+def second_project_closable(projects: list[dict[str, Any]], second: Path) -> bool:
+    """Whether `project-close` would close the second project and leave another
+    open: it is in front (the `projects` query's active row), and not alone."""
+    active = [row for row in projects if row.get("active")]
+    return len(projects) > 1 and len(active) == 1 and Path(str(active[0].get("root"))) == second
 
 
 def chaos_file(counter: int) -> str:
@@ -495,8 +512,9 @@ def apply_external(project: Path, op: str, target: str, counter: int) -> None:
     env = git_env(project)
     stash = project / ".git" / "qa-deleted"
 
-    def git(*args: str) -> None:
-        subprocess.run(["git", "-C", str(project), *args], capture_output=True, env=env, timeout=30)
+    def git(*args: str, cwd: Path = project) -> str:
+        return subprocess.run(["git", "-C", str(cwd), *args], capture_output=True, env=env, timeout=30,
+                              text=True).stdout
 
     try:
         if op == "compile-flags":
@@ -583,6 +601,57 @@ def apply_external(project: Path, op: str, target: str, counter: int) -> None:
             git("merge", "--abort")
         elif op == "git-checkout-file" and path.is_file():
             git("checkout", "-q", "--", target)
+        elif op == "second-project" and not (project.parent / SECOND_PROJECT).exists():
+            git("clone", "-q", "--no-hardlinks", str(project), str(project.parent / SECOND_PROJECT),
+                cwd=project.parent)
+        elif op == "huge-file":
+            folder = project / "qa-big"
+            folder.mkdir(parents=True, exist_ok=True)
+            line = f"{counter:08d} " + "lorem ipsum dolor sit amet, consectetur adipiscing elit " * 2 + "\n"
+            (folder / f"huge{counter % 2}.txt").write_text(line * (BIG_FILE_BYTES // len(line)))
+        elif op == "empty-folder":
+            (project / "qa-ext" / f"empty{counter % 4}" / ("inner" if counter % 2 else "")).mkdir(
+                parents=True, exist_ok=True)
+        elif op == "submodule":
+            # Added and committed, then by the counter: a commit inside (the
+            # pointer moves), a dirty file inside, deinit (an empty folder git
+            # still lists), and update --init bringing it back.
+            source = project.parent / SUBMODULE_SOURCE
+            sub = project / "qa-sub"
+            if not (source / ".git").exists():
+                source.mkdir(parents=True, exist_ok=True)
+                (source / "sub.txt").write_text("in the submodule\n")
+                for args in (("init", "-q", "-b", "main"), ("add", "-A"), ("commit", "-q", "-m", "sub")):
+                    git(*args, cwd=source)
+            file_transport = ("-c", "protocol.file.allow=always")
+            if not (project / ".gitmodules").exists():
+                git(*file_transport, "submodule", "add", "-q", str(source), "qa-sub")
+                git("commit", "-q", "-m", "qa submodule", "--no-verify")
+            elif not (sub / ".git").exists():
+                git(*file_transport, "submodule", "update", "-q", "--init", "qa-sub")
+            elif counter % 4 == 1:
+                (sub / "sub.txt").write_text(f"moved {counter}\n")
+                git("commit", "-q", "-am", f"sub {counter}", "--no-verify", cwd=sub)
+            elif counter % 4 == 2:
+                (sub / "dirty.txt").write_text(f"dirty {counter}\n")
+            elif counter % 4 == 3:
+                git("submodule", "deinit", "-q", "-f", "qa-sub")
+        elif op == "long-history" and not (project / "qa-history.txt").exists():
+            # LONG_HISTORY_COMMITS on the current branch through fast-import, each
+            # adding then changing one file, which is then checked out of the new head.
+            branch = git("symbolic-ref", "-q", "HEAD").strip()
+            head = git("rev-parse", "-q", "--verify", "HEAD").strip()
+            if branch and head:
+                stream = []
+                for n in range(LONG_HISTORY_COMMITS):
+                    body = f"change {n}\n"
+                    stream.append(f"commit {branch}\ncommitter QA Monkey <qa@example.com> {1700000000 + n} +0000\n"
+                                  f"data {len(f'qa history {n}')}\nqa history {n}\n"
+                                  + (f"from {head}\n" if n == 0 else "")
+                                  + f"M 644 inline qa-history.txt\ndata {len(body)}\n{body}\n")
+                subprocess.run(["git", "-C", str(project), "fast-import", "--quiet"], input="".join(stream),
+                               capture_output=True, env=env, timeout=120, text=True)
+                git("checkout", "-q", "HEAD", "--", "qa-history.txt")
         elif op == "git-worktree":
             # Another working tree of the repository, beside the project: three
             # slots, each added (on a branch of its own or detached), then locked,
@@ -692,7 +761,7 @@ def xdotool_chord(chord: str) -> str | None:
 PROFILES: dict[str, dict[str, float]] = {
     "default": {"element": 28, "text": 8, "chord": 12, "command": 7, "type": 10, "burst": 5, "drag": 4,
                 "wheel": 4, "point": 3, "setting": 3, "window": 2, "terminal": 2, "file": 3,
-                "external": 2, "kill9": 0.4, "ime": 1.5},
+                "external": 2, "kill9": 0.4, "ime": 1.5, "project": 0.6},
     # Editing: text, keys, typing and saves; the data-loss oracles get the most to check.
     "editing": {"element": 8, "text": 20, "chord": 20, "type": 22, "burst": 10, "command": 6, "file": 4,
                 "wheel": 3, "external": 3, "kill9": 0.6, "setting": 2, "ime": 4},
@@ -701,7 +770,7 @@ PROFILES: dict[str, dict[str, float]] = {
                "chord": 8, "text": 6, "type": 4, "point": 4, "burst": 4},
     # The outside world: git, renames, permissions, churn under open buffers.
     "world": {"element": 16, "external": 18, "file": 8, "command": 8, "chord": 8, "type": 8, "text": 6,
-              "kill9": 1.0, "terminal": 3},
+              "kill9": 1.0, "terminal": 3, "project": 3},
     "terminal": {"terminal": 30, "element": 14, "chord": 12, "type": 10, "burst": 6, "window": 4,
                  "command": 6, "wheel": 6, "setting": 2},
     "settings": {"setting": 25, "element": 25, "chord": 10, "type": 8, "text": 6, "window": 4, "command": 6},
@@ -831,6 +900,7 @@ class Monkey:
             "external": self.external_action, "kill9": self.kill9_action, "diff": self.diff_action,
             "tooling": self.tooling_action, "remote": self.remote_action, "plugin": self.plugin_action,
             "scale": self.scale_action, "diskfull": self.diskfull_action, "ime": self.ime_action,
+            "project": self.project_action,
         }
         self._plugin_commands: list[str] | None = None
         self._tooling_ready = False
@@ -1419,11 +1489,13 @@ class Monkey:
         target = self.rng.choice(candidates) if candidates else "README.md"
         self.app.record_external({"external": op, "target": target, "counter": self.counter})
         apply_external(self.world, op, target, self.counter)
-        if op.startswith("git-"):
+        if op.startswith("git-") or op in ("submodule", "long-history"):
             self.app.outside_change_pending = True
         if op == "git-worktree":
             # The pick over the trees as they now are.
             self.app.send_line("git-worktrees")
+        elif op == "huge-file" and self.rng.random() < 0.5:
+            self.app.send_line(f"open qa-big/huge{self.counter % 2}.txt")
         elif reviewed:
             self.app.send_line("review-checkpoint")
             return "ext:checkpoint-review"
@@ -1543,6 +1615,35 @@ class Monkey:
             command += f" {self.rng.randrange(0, 3)}"
         self.app.send_line(command)
         return f"tooling:{command}"
+
+    def project_action(self) -> str:
+        """A second project (SECOND_PROJECT, a clone beside the run's own):
+        opened, switched to and from, and closed again while another stays open
+        -- never the run's own project, whose close or replacement re-roots the
+        session away from its scratch copy (FORBIDDEN_COMMANDS)."""
+        if self.project is None:
+            return self.command_action()
+        second = self.project.parent / SECOND_PROJECT
+        if not second.exists():
+            self.counter += 1
+            self.app.record_external({"external": "second-project", "target": "", "counter": self.counter})
+            apply_external(self.project, "second-project", "", self.counter)
+        roll = self.rng.random()
+        if roll < 0.3:
+            self.app.send_line(f"project-open {q.quote_arg(str(second))}")
+            return "project:open"
+        if roll < 0.8:
+            command = self.rng.choice(("project-next", "project-prev"))
+            self.app.send_line(command)
+            return f"project:{command}"
+        try:
+            projects = self.app.query("projects")
+        except q.QaFailure:
+            return "project:busy"
+        if second_project_closable(projects, second):
+            self.app.send_line("project-close")
+            return "project:close"
+        return "project:none"
 
     def _chaos_lsp_action(self) -> str:
         """Requests to tools/qa/plugins/qa-chaos-lsp's server, which answers them

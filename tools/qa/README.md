@@ -399,9 +399,13 @@ application; an image-only clipboard pasted in),
 `file` (open or drop the odd files seeded under `qa-weird/`: CRLF, mixed endings,
 Latin-1, a BOM, binary, a 300 KB line, Unicode names, symlink loops), `external`
 (rewrites, renames, deletes, chmods, symlinks, git commit/switch/stash/a
-conflicting merge, working trees added, locked and deleted beside the project --
-recorded, so a replay redoes them; one change in twelve is made between
-`review-checkpoint-mark` and `review-checkpoint`) and `kill9`. A **profile**
+conflicting merge, working trees added, locked and deleted beside the project,
+a 50 MB file, empty folders, a submodule added, moved, dirtied, deinitialized and
+brought back, a 3000-commit history -- recorded, so a replay redoes them; one change in twelve is made between
+`review-checkpoint-mark` and `review-checkpoint`), `project` (a second project,
+a clone beside the run's own: opened, switched to and from with
+`project-next`/`project-prev`, and closed while another stays open -- never the
+run's own) and `kill9`. A **profile**
 sets the weights: `default`, `editing`, `layout`, `world`, `terminal`, `settings`,
 `diff` (diffs typed into on the editable side, and killed there), `scaling` (the scaling oracle alone), `tooling` (clangd, gdb, the `qa-tests` test provider and the `qa-chaos-lsp`
 server and `qa-chaos-dap` adapter through their plugins), `remote`, `crash` (a dozen kills a run), `plugins` (the bundled

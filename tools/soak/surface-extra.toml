@@ -5,7 +5,7 @@
 
 [item."external file changes"]
 kind = "outside world"
-covered_by = "monkey `external` source (rewrite, append, truncate, CRLF, binary, create/delete trees, renames, chmod, symlinks and loops) and the churn thread"
+covered_by = "monkey `external` source (rewrite, append, truncate, CRLF, binary, create/delete trees, renames, chmod, symlinks and loops; a 50 MB file, empty folders, a submodule through its lifecycle, a 3000-commit history) and the churn thread"
 
 [item."git from outside"]
 kind = "outside world"
@@ -113,3 +113,7 @@ open-folder = "opens a native folder dialog; qa scenario native-dialogs"
 "File/Open Folder…" = "native folder dialog; qa scenario native-dialogs"
 "File/Save As…" = "native file dialog; qa scenario native-dialogs"
 "Remote/Open Folder on Host…" = "prompts for a host; the remote job opens its host through `remote-open`"
+
+[item."several projects open"]
+kind = "outside world"
+covered_by = "monkey `project` source (a second scratch project cloned beside the run's own: project-open, project-next/prev, project-close of the second while the first stays open; never the run's own); the data oracle reads every project's buffers"
