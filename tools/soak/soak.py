@@ -2592,6 +2592,23 @@ def enforce_disk_budget(log) -> None:
     for path in corpus[: len(corpus) // 4]:
         path.unlink(missing_ok=True)
     log("disk budget: pruned verified evidence and a quarter of the corpus")
+    if disk_usage(SOAK) > budget and (dropped := drop_newest_recordings(entries, budget * 0.9)):
+        log(f"disk budget: dropped {dropped} open findings' last traces, the least recently seen first "
+            "(each still replays; `soak.py hunt` records it again)")
+
+
+def drop_newest_recordings(entries: dict[str, Any], target: float) -> int:
+    """Drops open findings' remaining traces, the oldest first, until the soak is
+    within `target` bytes; returns how many it dropped."""
+    traces = sorted((trace for sig in entries for trace in bundle_recordings(FINDINGS / sig)),
+                    key=lambda p: p.stat().st_mtime)
+    dropped = 0
+    for trace in traces:
+        if disk_usage(SOAK) <= target:
+            break
+        shutil.rmtree(trace, ignore_errors=True)
+        dropped += 1
+    return dropped
 
 
 def runner_code() -> str:

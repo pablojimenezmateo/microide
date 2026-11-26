@@ -321,3 +321,13 @@ class RecordingPolicyTests(unittest.TestCase):
         self.assertFalse(stale.exists())
         self.assertTrue(live.exists(), "a minimize still running keeps its scratch")
 
+    def test_over_budget_even_the_last_traces_go_oldest_first(self):
+        old = self.trace("aaaaaaaaaaaa", "evidence", 300)
+        new = self.trace("bbbbbbbbbbbb", "evidence", 10)
+        entries = {"aaaaaaaaaaaa": mock.Mock(status="new"), "bbbbbbbbbbbb": mock.Mock(status="new")}
+        sizes = iter([2000, 1000])
+        with mock.patch.object(self.soak, "disk_usage", side_effect=lambda _p: next(sizes, 0)):
+            self.assertEqual(self.soak.drop_newest_recordings(entries, 1500), 1)
+        self.assertFalse(old.exists())
+        self.assertTrue(new.exists(), "dropping stops once the soak fits")
+
