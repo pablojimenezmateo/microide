@@ -11,6 +11,11 @@
 #include "terminal/TerminalCell.h"
 #include "workspace/WorkspaceTerminalSelection.h"
 #include "workspace/render/TerminalRowPaint.h"
+#include "workspace/render/BottomPanelTerminalGridPaint.h"
+#include "workspace/render/PreparedFrameState.h"
+#include "render/Theme.h"
+#include "TestSupportSdl.h"
+#include "support/SoftwareCanvas.h"
 
 namespace microide::tests {
 namespace {
@@ -338,8 +343,50 @@ void TestRowSelectionEmphasisMatchesContainsCell() {
 
 }
 
+void TestTheGridLaysOutOnlyTheRowsThatFitItsBody() {
+  EnsureDummySdlVideoInitialized();
+  SoftwareCanvas canvas(1440, 900);
+  const microide::render::Theme theme = microide::render::MakeDefaultTheme();
+  const std::vector<TerminalLine> lines{MakeLine("prompt$ "), MakeLine("second")};
+  for (const float body_h : {16.0f, 24.0f, 30.0f, 44.0f}) {
+    microide::workspace::PreparedFrameState frame;
+    microide::workspace::TerminalGridInputs inputs{
+        .renderer = canvas.renderer(), .visible = true, .theme = &theme, .char_width = 8.4f};
+    microide::workspace::TerminalGridPaneInputs& pane = inputs.panes.emplace_back();
+    pane.body = SDL_FRect{0.0f, 854.0f, 1440.0f, body_h};
+    pane.text_x = 12.0f;
+    pane.text_y = 862.0f;
+    pane.text_width = 1400.0f;
+    pane.line_height = 17.6f;
+    pane.visible_rows = 2;
+    pane.line_count = lines.size();
+    pane.lines = lines;
+    pane.caret_cell = SDL_FRect{12.0f, pane.text_y + pane.line_height - 1.0f, 8.4f, pane.line_height};
+    pane.caret_owned = true;
+    inputs.damage = [](const SDL_FRect&) {};
+    microide::workspace::PrepareTerminalGridFrame(frame, inputs);
+    const float bottom = pane.body.y + pane.body.h;
+    std::size_t laid_out = 0;
+    for (const auto& row : frame.terminal_grid.rows) {
+      ++laid_out;
+      Expect(row.text_y + pane.line_height <= bottom + 0.01f,
+             "a body " + std::to_string(body_h) + " tall lays out a row whose text ends at " +
+                 std::to_string(row.text_y + pane.line_height) + ", past its bottom " + std::to_string(bottom));
+    }
+    const std::size_t fit = static_cast<std::size_t>((bottom - pane.text_y) / pane.line_height);
+    Expect(laid_out == std::min<std::size_t>(fit, 2), "a body " + std::to_string(body_h) + " tall lays out " +
+                                                       std::to_string(laid_out) + " rows, not every row that fits");
+    const bool caret_shown =
+        frame.terminal_grid.panes[0].caret.style != microide::workspace::TerminalCaretPaint::Style::None;
+    Expect(caret_shown == (fit >= 2), "a body " + std::to_string(body_h) + " tall " +
+                                          (caret_shown ? "shows" : "hides") + " a caret on the second row");
+  }
+}
+
 void RegisterTerminalRowPaintTests(std::vector<TestCase>& tests) {
   AddTest(tests, "TerminalRowPaint/SelectedTextKeepsItsOwnColour", TestSelectedTextKeepsItsOwnColour);
+  AddTest(tests, "TerminalRowPaint/TheGridLaysOutOnlyTheRowsThatFitItsBody",
+          TestTheGridLaysOutOnlyTheRowsThatFitItsBody);
   AddTest(tests, "TerminalRowPaint/UnderlinesTakeTheirColourAndShape", TestUnderlinesTakeTheirColourAndShape);
   AddTest(tests, "TerminalRowPaint/ASymbolRunKeepsTheBlankCellAfterIt", TestASymbolRunKeepsTheBlankCellAfterIt);
   AddTest(tests, "TerminalRowPaint/TextRunsSplitOnTheFace", TestTextRunsSplitOnTheFace);

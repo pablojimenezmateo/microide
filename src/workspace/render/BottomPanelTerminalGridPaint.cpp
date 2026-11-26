@@ -179,7 +179,8 @@ void PrepareTerminalGridFrame(PreparedFrameState& frame, const TerminalGridInput
           .fingerprint = MixRowKey(style, pane.reverse_video ? 1u : 2u),
       });
       TerminalCaretPaint& caret = painted.caret;
-      if (pane.caret_cell.has_value()) {
+      if (pane.caret_cell.has_value() &&
+          pane.caret_cell->y + pane.caret_cell->h + 1.0f <= pane.body.y + pane.body.h + 0.01f) {
         caret.style = !pane.caret_owned ? TerminalCaretPaint::Style::Outline
                       : (inputs.caret_phase_on || !pane.cursor.blinking) ? TerminalCaretPaint::Style::Solid
                                                                          : TerminalCaretPaint::Style::None;
@@ -233,8 +234,12 @@ void PrepareTerminalGridFrame(PreparedFrameState& frame, const TerminalGridInput
           units.push_back(DerivedDamage::Unit{});
           continue;
         }
-        const terminal::TerminalLine& line = pane.lines[slot];
         const float text_y = pane.text_y + static_cast<float>(slot) * pane.line_height;
+        if (text_y + pane.line_height > pane.body.y + pane.body.h + 0.01f) {
+          units.push_back(DerivedDamage::Unit{});
+          continue;
+        }
+        const terminal::TerminalLine& line = pane.lines[slot];
         TerminalGridRowPaint& row = grid.rows.emplace_back();
         row.rect = MakeRect(pane.body.x, text_y - 1.0f, pane.body.w, pane.line_height + 1.0f);
         row.text_y = text_y;
