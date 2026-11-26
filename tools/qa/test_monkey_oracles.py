@@ -3952,6 +3952,51 @@ class LspAnswersTests(unittest.TestCase):
             self.assertFalse(self.oracle([monkey_oracles.q.QaFailure("busy")])._lsp_answers_landed())
 
 
+class LspSettleTests(unittest.TestCase):
+    def oracle(self, answers):
+        app = mock.Mock()
+        it = iter(answers)
+
+        def query(verb, args=None):
+            self.assertEqual(verb, "status")
+            answer = next(it)
+            if isinstance(answer, Exception):
+                raise answer
+            return answer
+        app.query.side_effect = query
+        return monkey_oracles.LspSettle(app)
+
+    def test_requests_that_end_before_the_deadline_are_no_finding(self):
+        clock = _FakeClock()
+        oracle = self.oracle([{"lspRequestsInFlight": 3}, {"lspRequestsInFlight": 1}, {"lspRequestsInFlight": 0}])
+        with clock.patch(), mock.patch.object(monkey_oracles.q, "SLOW_FACTOR", 1.0):
+            self.assertEqual(oracle.check(), [])
+        self.assertEqual(clock.slept, [0.02, 0.02])
+
+    def test_a_request_still_counted_at_the_deadline_is_a_finding(self):
+        clock = _FakeClock()
+        oracle = self.oracle([{"lspRequestsInFlight": 2}] * 2000)
+        with clock.patch(), mock.patch.object(monkey_oracles.q, "SLOW_FACTOR", 3.0):
+            found = oracle.check()
+        self.assertEqual(found, [("lsp-settle", "2 language-server request(s) still in flight 10 s after the "
+                                                "chaos server's last reply was due")])
+        self.assertAlmostEqual(sum(clock.slept), monkey_oracles.LSP_SETTLE_S * 3.0, delta=0.03)
+
+    def test_the_wait_is_the_longest_chaos_reply_and_a_margin(self):
+        self.assertEqual(monkey_oracles.CHAOS_LSP_LONGEST_S, 2.0)
+        self.assertEqual(monkey_oracles.LSP_SETTLE_S, 10.0)
+
+    def test_an_app_that_does_not_answer_is_not_this_oracles_finding(self):
+        with _FakeClock().patch():
+            self.assertEqual(self.oracle([monkey_oracles.q.QaFailure("busy")]).check(), [])
+
+    def test_a_count_that_went_below_zero_never_settles(self):
+        clock = _FakeClock()
+        oracle = self.oracle([{"lspRequestsInFlight": -1}] * 2000)
+        with clock.patch(), mock.patch.object(monkey_oracles.q, "SLOW_FACTOR", 1.0):
+            self.assertEqual(oracle.check()[0][0], "lsp-settle")
+
+
 class LoggedHistoryTests(unittest.TestCase):
     def setUp(self):
         self.dir = Path(tempfile.mkdtemp())

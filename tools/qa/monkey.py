@@ -484,6 +484,10 @@ EXTERNAL_OPS = ("rewrite", "append", "truncate", "crlf", "create-tree", "delete-
                 "git-worktree")
 
 
+def chaos_file(counter: int) -> str:
+    return f"c{counter % CHAOS_FILES}.qachaos"
+
+
 def apply_external(project: Path, op: str, target: str, counter: int) -> None:
     """One outside-world change, deterministic in (op, target, counter) so a
     replay redoes it. `target` is a project-relative file path."""
@@ -498,6 +502,12 @@ def apply_external(project: Path, op: str, target: str, counter: int) -> None:
         if op == "compile-flags":
             # What clangd needs to resolve the fixture's includes (flows_lsp_debug._lsp_ready).
             (project / "compile_flags.txt").write_text("-Iinclude\n-std=c++17\n")
+        elif op == "chaos-file":
+            # A file for tools/qa/plugins/qa-chaos-lsp's server (CHAOS_FILES slots).
+            folder = project / "qa-chaos"
+            folder.mkdir(parents=True, exist_ok=True)
+            (folder / chaos_file(counter)).write_text(
+                "".join(f"def chaos_{counter}_{row}(a, b)\n    use chaos_{counter}_{row - 1}\n" for row in range(12)))
         elif op == "diff-variant":
             # Two versions of one generated source, for compare-files: the
             # structural diff's paths (diff_variants.py). Six slots, reused.
@@ -729,7 +739,8 @@ PROFILES: dict[str, dict[str, float]] = {
 # profile runs with none -- which is why no soak run had ever had a language
 # server, a debug adapter or the Lua plugin host behind its commands.
 PROFILE_PLUGINS: dict[str, tuple[str, ...]] = {
-    "tooling": ("cpp-lsp", "gdb-dap", "todo-highlight", "eol-annotations", "language-tools", "qa-tests"),
+    "tooling": ("cpp-lsp", "gdb-dap", "todo-highlight", "eol-annotations", "language-tools", "qa-tests",
+                "qa-chaos-lsp"),
     # Self-contained: no network, no tool to install (prettier and eslint run npx).
     "plugins": ("surface-preview", "presentation-demo", "todo-highlight", "eol-annotations", "language-tools"),
 }
@@ -739,6 +750,11 @@ PLUGIN_SETTINGS = ("plugins.inline_surfaces", "plugins.code_lens_above")
 # (file, lines it has) -- breakpoints land on real lines, positions inside them.
 TOOLING_FILES = (("src/scheduler.cpp", 26), ("src/main.cpp", 16), ("include/scheduler.hpp", 26))
 TOOLING_FUNCTIONS = ("taskflow::Scheduler::run", "taskflow::Scheduler::add", "main", "nosuchfunction")
+# Files the chaos language server's actions write and open (apply_external's
+# `chaos-file`), and the share of them LspSettle checks afterwards: it waits out
+# the server's latest reply, so not after every one.
+CHAOS_FILES = 3
+CHAOS_SETTLE_SHARE = 0.25
 LSP_COMMANDS = ("goto-definition", "goto-declaration", "goto-type-definition", "goto-implementation",
                 "find-references", "completion", "signature-help", "show-hover", "code-actions",
                 "format-document", "next-problem", "goto-symbol")
@@ -826,6 +842,7 @@ class Monkey:
         self.invariants = mo.InvariantOracle(app)
         self.idle = mo.IdleOracle(app)
         self.structural = mo.StructuralDiffOracle(app)
+        self.lsp_settle = mo.LspSettle(app)
         self.converge = mo.RemoteConvergence(app, project, host.root, host.open_line()) \
             if host is not None and project is not None else None
         self.new_states = 0
@@ -1452,6 +1469,8 @@ class Monkey:
             self.app.send_line("set-setting debug.enabled true")
             self.app.send_line("open src/scheduler.cpp")
             return "tooling:setup"
+        if self.rng.random() < 0.15:
+            return self._chaos_lsp_action()
         path, lines = self.rng.choice(TOOLING_FILES)
         line = self.rng.randrange(1, lines + 1)
         roll = self.rng.random()
@@ -1520,6 +1539,30 @@ class Monkey:
             command += f" {self.rng.randrange(0, 3)}"
         self.app.send_line(command)
         return f"tooling:{command}"
+
+    def _chaos_lsp_action(self) -> str:
+        """Requests to tools/qa/plugins/qa-chaos-lsp's server, which answers them
+        late, twice, malformed or under the wrong id: a fresh file now and then
+        (its didOpen and diagnostics), a position in it, a request, a typed edit
+        for a didChange. Sometimes LspSettle afterwards: every request ended."""
+        self.counter += 1
+        name = f"qa-chaos/{chaos_file(self.counter)}"
+        if self.rng.random() < 0.3 or not (self.project / name).exists():
+            self.app.record_external({"external": "chaos-file", "target": "", "counter": self.counter})
+            apply_external(self.project, "chaos-file", "", self.counter)
+        self.app.send_line(f"open {name}")
+        self.app.send_line(f"goto {self.rng.randrange(1, 25)}:{self.rng.randrange(1, 20)}")
+        command = self.rng.choice(LSP_COMMANDS + ("rename-symbol chaos",))
+        if command == "goto-symbol":
+            command += " chaos"
+        self.app.send_line(command)
+        if self.rng.random() < 0.3:
+            self.app.send_line("type " + q.quote_arg(self.rng.choice(("x", "(", ".", "def "))))
+        if self.rng.random() < CHAOS_SETTLE_SHARE:
+            self.app.record_external({"oracle": "lsp-settle"})
+            self.app.report(f"monkey step {self.step_index}", self.lsp_settle.check())
+            return "tooling:chaos-settle"
+        return f"tooling:chaos:{command.split()[0]}"
 
     def plugin_action(self) -> str:
         """A command a loaded plugin registered (the catalogue's `plugin` rows:
@@ -1902,6 +1945,8 @@ class Monkey:
         elif name == "structural-diff":
             self._report_with_evidence(label, self.structural.check(), self.structural.evidence)
             self.structural.evidence = {}
+        elif name == "lsp-settle":
+            self.app.report(label, self.lsp_settle.check())
         elif name == "converge" and self.converge is not None:
             self._report_with_evidence(label, self.converge.check(), self.converge.evidence)
             self.converge.evidence = {}

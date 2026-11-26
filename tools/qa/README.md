@@ -158,7 +158,9 @@ and may export `PLUGINS` (bundled ones, `plugins/<name>`, or QA-only ones under
 `plugins/` here, for test content no bundled plugin ships: `qa-snippets`;
 `qa-launch`, a launch configuration for the fixture's binary; `qa-api`, one of
 each provider and event; `qa-tests`, a test provider for C++ and Python the
-monkey's `tooling` profile drives) and `ENV`. `scenarios.FLOW_MODULES` lists the modules in
+monkey's `tooling` profile drives; `qa-chaos-lsp`, a language server for
+`.qachaos` files answering late, twice, malformed or under the wrong id, which
+the same profile drives) and `ENV`. `scenarios.FLOW_MODULES` lists the modules in
 suite order; a `flows_*.py` missing from it, or a scenario name two modules
 define, fails the import rather than dropping a flow. The import also rejects
 duplicate literal dictionary keys before Python can silently overwrite them,
@@ -356,6 +358,11 @@ before trusting a clean cell. "Closed" names the change that removed a gap.
 - **Structural diff** (`StructuralDiffOracle`, every 5 steps while a diff is in
   front). The front compare tab's refinement only; not a background diff, not a
   merge's panes, not rows the query cut.
+- **Language-server requests end** (`LspSettle`, after a quarter of the
+  `tooling` profile's `qa-chaos-lsp` requests). The `status` query's
+  `lspRequestsInFlight` back at zero within the chaos server's latest reply plus
+  8 s. Cannot see: a request lost while clangd's own are slow (they share the
+  count); an answer applied to the wrong request.
 - **Redraw verifier** (in the app). A partial frame against a full render of the
   SAME prepared state: a full render that is itself wrong, or a label derived
   from stale state, passes it (the chrome checks above cover the labels); a state
@@ -394,8 +401,8 @@ conflicting merge, working trees added, locked and deleted beside the project --
 recorded, so a replay redoes them; one change in twelve is made between
 `review-checkpoint-mark` and `review-checkpoint`) and `kill9`. A **profile**
 sets the weights: `default`, `editing`, `layout`, `world`, `terminal`, `settings`,
-`diff` (diffs typed into on the editable side, and killed there), `scaling` (the scaling oracle alone), `tooling` (clangd, gdb and the `qa-tests` test provider through their
-plugins), `remote`, `crash` (a dozen kills a run), `plugins` (the bundled
+`diff` (diffs typed into on the editable side, and killed there), `scaling` (the scaling oracle alone), `tooling` (clangd, gdb, the `qa-tests` test provider and the `qa-chaos-lsp`
+server through their plugins), `remote`, `crash` (a dozen kills a run), `plugins` (the bundled
 data-only plugins: their commands, surfaces and reloads), and the former command
 fuzzer's `commands` and `editor`. The chord source presses two-stroke bindings
 (`Ctrl+K Ctrl+O`) as two strokes.

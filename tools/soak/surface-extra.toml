@@ -41,7 +41,7 @@ covered_by = "qa scenarios plugin-* (flows_plugin_api.py); the monkey runs with 
 
 [item."language servers answering out of order"]
 kind = "outside world"
-excluded = "needs the scripted fake server of safety-plan W8 (LspSessionFuzz), not yet built; real clangd is driven by the lsp-* scenarios"
+covered_by = "the monkey's `tooling` profile through tools/qa/plugins/qa-chaos-lsp (a server for `.qachaos` files answering late, twice, under the wrong id, malformed or with neither result nor error first; stale-version diagnostics, server requests), with the LspSettle oracle after a quarter of them; real clangd through plugins/cpp-lsp; WorkspaceLspClient's sequence tests and LspSessionFuzz"
 
 [item."debug adapters"]
 kind = "outside world"
@@ -57,7 +57,7 @@ excluded = "a portal nobody answers under Xvfb blocks the loop; the monkey never
 
 [item."IME composition"]
 kind = "window system"
-excluded = "Xvfb has no input method; needs a control-channel composition hook (TD-2026-11-08-435 item 4). Text past Latin-1 goes through the paste path"
+covered_by = "monkey `ime` source through the control channel's `compose` command (Xvfb has no input method): pre-edit readings, conversions, commits and cancels"
 
 [item."clipboard set by other applications"]
 kind = "window system"
