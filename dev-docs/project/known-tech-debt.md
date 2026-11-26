@@ -409,11 +409,18 @@ What it left, by workstream:
    trusting it. Was: **Oracle not built:** input-to-frame latency with the redraw trace attached. (The
    idle-wake oracle and more always-a-finding log markers landed; `util::Log` has no
    levels, so "any error line" stays the marker list.)
-7. **Measurement not built (W1.6/W1.7):** a periodic gcov job in the rotation,
-   plateau detection shifting effort to the least-covered areas, pairwise state x
-   action and branch-coverage reports per commit. `surface.py` reports reached items
-   per category; a keybinding counts as reached when its command ran, not when its
-   chord ran in each context.
+7. **Measurement (W1.6/W1.7): mostly built.** The coverage job is in the rotation
+   (the `coverage` build, clang source-based, merged per job into one profile;
+   `soak.py coverage` writes lines, functions and branches by area at the
+   current commit, and `soak.py health` lists the gaps); the monkey steers by
+   its own state x action coverage (`coverage.json`); `surface.py` reports
+   reached items per category (a keybinding counts as reached when its command
+   ran, not when its chord ran in each context). 2026-11-26: the remote server
+   was missing from it -- 1.2% of src/server, because its counters never reached
+   the profile (sshd dropped LLVM_PROFILE_FILE, the daemon `_exit`ed without
+   writing, the host's stop killed it first); fixed in 285bf3ba9 (a remote run:
+   2.7% -> 66%). Not built: plateau detection that moves job weights toward the
+   least-covered areas, and a per-commit branch-coverage delta.
 8. **W10 remainder: DONE 2026-11-26.** Mutation testing over the oracle code:
    `tools/run-checks.sh mutation` (`tools/qa/mutation-test.sh`, mutmut over
    `monkey_oracles.py` against `test_monkey_oracles.py`) fails on any mutant that
