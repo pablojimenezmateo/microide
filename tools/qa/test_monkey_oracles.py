@@ -4266,13 +4266,16 @@ class ResourceSmallTests(unittest.TestCase):
         import ctypes
         import threading
         stop = threading.Event()
+        named = threading.Barrier(3)
 
         def named_wait():
             ctypes.CDLL(None, use_errno=True).prctl(15, b"qa-same", 0, 0, 0)
+            named.wait()
             stop.wait()
         threads = [threading.Thread(target=named_wait) for _ in range(2)]
         for thread in threads:
             thread.start()
+        named.wait(timeout=10)
         try:
             names = monkey_oracles.ResourceOracle._thread_names(os.getpid())
         finally:

@@ -82,6 +82,8 @@ def flow_git_view_keys(app: q.App) -> None:
     app.expect(_porcelain(app).get(f"keys/{selected}", "") == "M ", f"Stage stages the selected entry ({_porcelain(app)})")
     # With something staged, Git: Commit… opens the message editor (the bare `c`
     # did); Escape closes it and the keys return to the list.
+    app.wait_until(lambda: app.element("button:git/commit").get("enabled", True), 5.0,
+                   "the git view to show the staged entry (Commit enabled)")
     app.send("git-commit")
     app.wait_until(lambda: app.elements("field", prefix="field:git/subject"), 3.0, "Git: Commit… to open the editor")
     app.expect(bool(app.elements("field", prefix="field:git/subject")), "Git: Commit… opens the commit message editor")
