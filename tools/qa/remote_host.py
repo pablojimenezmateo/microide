@@ -26,6 +26,8 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 SCRIPT = HERE / "local-sshd.sh"
+# How long stop() lets the host server finish exiting before it kills what is left.
+SERVER_EXIT_WAIT_S = 5.0
 SHARED_ROOT = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / "microide-qa" / "sshd" / "root"
 HOST_NAME = "qa-local"
 # What a fault can be: the ssh link (its ControlMaster), the host's server, or nothing.
@@ -195,6 +197,10 @@ class LoopbackHost:
 
     def stop(self) -> None:
         subprocess.run(["bash", str(SCRIPT), "stop"], env=self._env(), capture_output=True, timeout=60)
+        # `microide-server stop` returns once the server has the request, not once
+        # it has exited: killed before it returns from its listener, a coverage
+        # build's server never writes its profile (the soak saw 1% of src/server).
+        self._wait_gone(str(self.home / ".local" / "share" / "microide" / "server"), SERVER_EXIT_WAIT_S)
         self._kill_matching(str(self.state))
         shutil.rmtree(self.scratch, ignore_errors=True)
 
@@ -241,8 +247,10 @@ class LoopbackHost:
         return 0
 
     @staticmethod
-    def _kill_matching(needle: str, program: str | None = None) -> int:
-        killed = 0
+    def _matching(needle: str, program: str | None = None) -> list[int]:
+        """The processes, other than this one, whose command line holds `needle`
+        (and whose program is `program`, when given)."""
+        found = []
         own = os.getpid()
         for entry in Path("/proc").iterdir():
             if not entry.name.isdigit() or int(entry.name) == own:
@@ -254,9 +262,26 @@ class LoopbackHost:
             if program is not None and os.path.basename(argv[0].decode(errors="replace")) != program:
                 continue
             if needle in b" ".join(argv).decode(errors="replace"):
-                try:
-                    os.kill(int(entry.name), signal.SIGKILL)
-                    killed += 1
-                except (ProcessLookupError, PermissionError):
-                    pass
+                found.append(int(entry.name))
+        return found
+
+    @staticmethod
+    def _kill_matching(needle: str, program: str | None = None) -> int:
+        killed = 0
+        for pid in LoopbackHost._matching(needle, program):
+            try:
+                os.kill(pid, signal.SIGKILL)
+                killed += 1
+            except (ProcessLookupError, PermissionError):
+                pass
         return killed
+
+    @staticmethod
+    def _wait_gone(needle: str, timeout_s: float) -> bool:
+        """Whether every process naming `needle` has exited within `timeout_s`."""
+        deadline = time.monotonic() + timeout_s
+        while LoopbackHost._matching(needle):
+            if time.monotonic() >= deadline:
+                return False
+            time.sleep(0.05)
+        return True

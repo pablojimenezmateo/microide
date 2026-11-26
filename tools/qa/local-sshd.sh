@@ -65,7 +65,7 @@ PubkeyAuthentication yes
 StrictModes no
 UsePAM no
 PidFile $STATE/sshd.pid
-SetEnv HOME=$HOST_HOME
+SetEnv HOME=$HOST_HOME${LLVM_PROFILE_FILE:+ LLVM_PROFILE_FILE=$LLVM_PROFILE_FILE}
 EOF
   cat > "$STATE/ssh_config" <<EOF
 # The same host behind a far link: 60 ms each way (a 120 ms round trip), so the

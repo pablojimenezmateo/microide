@@ -21,6 +21,7 @@
 #include "project/remote/ServerStatusText.h"
 #include "server/RemoteServer.h"
 #include "terminal/TerminalHostWire.h"
+#include "util/CoverageProfile.h"
 #include "util/JsonFormat.h"
 #include "util/JsonValue.h"
 #include "util/Log.h"
@@ -219,6 +220,7 @@ int Start(const Options& options) {
       });
       code = server.RunListener(listen_fd);
     }
+    (void)microide::util::FlushCoverageProfile();
     ::_exit(code);
   }
   int status = 0;

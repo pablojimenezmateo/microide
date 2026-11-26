@@ -7,6 +7,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -168,6 +169,31 @@ class HostTerminalCallerTests(unittest.TestCase):
         self.assertEqual(seen.read_text(), f"stop|{home}|||\n")
         self.assertEqual(sshd.wait(timeout=10), -15)
 
+
+
+class WaitGoneTests(unittest.TestCase):
+    def _sleeper(self, seconds: float) -> subprocess.Popen:
+        needle = f"qa-wait-gone-{os.getpid()}-{seconds}"
+        proc = subprocess.Popen([sys.executable, "-c", f"import time; time.sleep({seconds})", needle])
+        self.addCleanup(proc.kill)
+        return proc, needle
+
+    def test_it_returns_once_the_process_has_exited(self):
+        proc, needle = self._sleeper(0.3)
+        start = time.monotonic()
+        self.assertTrue(rh.LoopbackHost._wait_gone(needle, 5.0))
+        self.assertLess(time.monotonic() - start, 3.0)
+        proc.wait()
+
+    def test_it_gives_up_at_the_deadline_without_killing(self):
+        proc, needle = self._sleeper(30)
+        self.assertFalse(rh.LoopbackHost._wait_gone(needle, 0.2))
+        self.assertIsNone(proc.poll(), "the process still runs: stop() kills what is left")
+
+    def test_matching_skips_this_process_and_filters_by_program(self):
+        proc, needle = self._sleeper(30)
+        self.assertEqual(rh.LoopbackHost._matching(needle), [proc.pid])
+        self.assertEqual(rh.LoopbackHost._matching(needle, program="no-such-program"), [])
 
 if __name__ == "__main__":
     unittest.main()
