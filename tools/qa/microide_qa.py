@@ -130,6 +130,26 @@ def finding_lines(lines: list[str], injected: set[str] | None = None) -> list[st
     return found
 
 
+_FRAME_MONO = re.compile(r"^microide redraw frame: .* mono=([0-9.]+)")
+
+
+def interleave_timeline(actions: list[dict[str, Any]], log_lines: list[str], keep: int = 400) -> str:
+    """The run's last actions and the app's frame lines in one time order: the
+    driver stamps each replay row with time.monotonic() (`t`), and the app each
+    frame line with the same CLOCK_MONOTONIC (`mono=`), so the frames an action
+    caused stand right after it."""
+    events: list[tuple[float, int, str]] = []
+    for index, action in enumerate(actions):
+        if isinstance(action.get("t"), (int, float)):
+            row = json.dumps({k: v for k, v in action.items() if k != "t"}, ensure_ascii=False)
+            events.append((float(action["t"]), 0, f"action {index}: {row[:300]}"))
+    for line in log_lines:
+        if (match := _FRAME_MONO.match(line)) is not None:
+            events.append((float(match.group(1)), 1, line))
+    events.sort(key=lambda event: (event[0], event[1]))
+    return "".join(f"{when:.3f}  {text}\n" for when, _, text in events[-keep:])
+
+
 def loaded_diff(tab: dict[str, Any] | None) -> bool:
     """A diff tab whose sides have been read: a diff opens as a stand-in and
     loads on the reader thread, and commands on its changes wait for that."""
@@ -2956,7 +2976,12 @@ class App:
         (folder / "trace.txt").write_text("\n".join(self.recent_log) + "\n")
         # The log's tail too: a crash's sanitizer report and stack, the frames
         # before the trace window (the soak runner's FINDING.md reads both).
-        (folder / "log-tail.txt").write_text(self.log_tail(64 * 1024))
+        tail = self.log_tail(64 * 1024)
+        (folder / "log-tail.txt").write_text(tail)
+        # The actions and the frames they caused, on one clock (the frame
+        # lines' mono= and the rows' t).
+        if timeline := interleave_timeline(self.actions, tail.splitlines()):
+            (folder / "timeline.txt").write_text(timeline)
         (folder / "machine.txt").write_text(machine_pressure())
         self._write_state_snapshot(folder)
         if self.recording and self._trace_dir is not None:

@@ -206,6 +206,27 @@ void TestRedrawTraceAccumulatorCountsAndFlushes() {
   Expect(accumulator.frames() == 0, "the accumulator should reset after flushing at the interval");
 }
 
+void TestRedrawTraceFrameLinesCarryTheMonotonicClock() {
+  static std::string captured;
+  captured.clear();
+  SDL_LogOutputFunction previous = nullptr;
+  void* previous_data = nullptr;
+  SDL_GetLogOutputFunction(&previous, &previous_data);
+  SDL_SetLogOutputFunction([](void*, int, SDL_LogPriority, const char* message) { captured = message; }, nullptr);
+  RedrawTraceAccumulator accumulator;
+  accumulator.Configure(false, true);
+  const double before = std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
+  accumulator.Record(RedrawFrameStats{.full_redraw = true, .reason = "full", .event_type = SDL_EVENT_KEY_DOWN});
+  const double after = std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
+  SDL_SetLogOutputFunction(previous, previous_data);
+  const std::size_t at = captured.find(" mono=");
+  Expect(at != std::string::npos, "the frame line carries the monotonic clock: " + captured);
+  Expect(captured.find(" event=") < at, "after the event, the line's last field: " + captured);
+  const double mono = std::stod(captured.substr(at + 6));
+  Expect(mono >= before - 0.001 && mono <= after + 0.001,
+         "on the clock the QA driver stamps its rows with (CLOCK_MONOTONIC): " + captured);
+}
+
 void TestRedrawTraceAccumulatorIgnoresFramesWhenDisabled() {
   RedrawTraceAccumulator accumulator;
   accumulator.Record(RedrawFrameStats{.full_redraw = true, .reason = "full"});
@@ -602,6 +623,8 @@ AddTest(tests, "Application/ALateWakeIsDescribed", TestALateWakeIsDescribed);
             TestATimedWaitAnEventEndsKeepsItsDeadline);
   AddTest(tests, "Application/EventDrainBudgetYieldsOnlyWithPendingRedraw",
           TestEventDrainBudgetYieldsOnlyWithPendingRedraw);
+  AddTest(tests, "Application/RedrawTraceFrameLinesCarryTheMonotonicClock",
+          TestRedrawTraceFrameLinesCarryTheMonotonicClock);
   AddTest(tests, "Application/RedrawTraceAccumulatorCountsAndFlushes",
           TestRedrawTraceAccumulatorCountsAndFlushes);
   AddTest(tests, "Application/RedrawTraceAccumulatorIgnoresFramesWhenDisabled",

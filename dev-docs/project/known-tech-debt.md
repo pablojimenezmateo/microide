@@ -158,8 +158,10 @@ splits "no replay reproduces" by it). Open, in the order they would pay:
    dead -- nothing opened it since project search moved to the sidebar; the
    mode, its text-input surface and their ~160 lines of branches are gone);
    timestamps on the app's log lines on the driver's clock, so a trace line can
-   be put beside the replay row that caused it (a prefix would change every log
-   signature: it needs a field on the frame lines instead).
+   be put beside the replay row that caused it (DONE 2026-11-26: each frame
+   line ends `mono=<s>`, CLOCK_MONOTONIC as the driver's rows' `t`, and every
+   finding bundle has a `timeline.txt` of its last actions and frames in one
+   order).
 8. **The stall watchdog's signal can interrupt a system call: AUDITED
    2026-11-25.** Its handler (and every other one) is `SA_RESTART`, so reads and
    writes restart; what never restarts is `poll`/`select`/sleeps. Of the

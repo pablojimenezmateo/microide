@@ -1,6 +1,7 @@
 #include "app/RedrawTraceAccumulator.h"
 
 #include <algorithm>
+#include <chrono>
 #include <string>
 
 #include "app/SdlWaker.h"
@@ -18,12 +19,13 @@ void RedrawTraceAccumulator::Record(const RedrawFrameStats& stats) {
     const SDL_FRect& bounds = stats.dirty_bounds;
     const std::string event = stats.event_type != 0 ? " event=" + SdlEventName(stats.event_type) : std::string();
     SDL_Log(
-        "microide redraw frame: frame=%llu reason=%s requested=%s rendered=%s promoted=%s dirty=%zu clips=%zu elapsed=%.2f ms bounds=%d,%d,%d,%d%s",
+        "microide redraw frame: frame=%llu reason=%s requested=%s rendered=%s promoted=%s dirty=%zu clips=%zu elapsed=%.2f ms bounds=%d,%d,%d,%d%s mono=%.3f",
         static_cast<unsigned long long>(stats.frame_index), reason, stats.full_redraw_requested ? "full" : "partial",
         stats.full_redraw ? "full" : "partial", stats.promoted_partial_to_full ? "yes" : "no",
         stats.dirty_rect_count, stats.rendered_clip_count,
         static_cast<double>(stats.elapsed_ns) / 1'000'000.0, static_cast<int>(bounds.x),
-        static_cast<int>(bounds.y), static_cast<int>(bounds.w), static_cast<int>(bounds.h), event.c_str());
+        static_cast<int>(bounds.y), static_cast<int>(bounds.w), static_cast<int>(bounds.h), event.c_str(),
+        std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count());
   }
 
   if (!enabled_) {

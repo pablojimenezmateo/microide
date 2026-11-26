@@ -411,6 +411,20 @@ class RecordingTests(unittest.TestCase):
         self.assertTrue(q.is_finding_line(own))
         self.assertIsNone(q.rr_failure(own))
 
+    def test_the_timeline_puts_each_frame_after_the_action_before_it(self):
+        actions = [{"key": "a", "t": 10.0}, {"line": "save", "t": 10.5}, {"key": "b"}]
+        log = ["microide redraw frame: frame=1 reason=x elapsed=1.0 ms bounds=0,0,0,0 mono=10.200",
+               "microide something else mono=10.3",
+               "microide redraw frame: frame=2 reason=y elapsed=1.0 ms bounds=0,0,0,0 mono=10.500",
+               "microide redraw frame: frame=0 reason=old elapsed=1.0 ms bounds=0,0,0,0"]
+        self.assertEqual(q.interleave_timeline(actions, log),
+                         '10.000  action 0: {"key": "a"}\n'
+                         "10.200  microide redraw frame: frame=1 reason=x elapsed=1.0 ms bounds=0,0,0,0 mono=10.200\n"
+                         '10.500  action 1: {"line": "save"}\n'
+                         "10.500  microide redraw frame: frame=2 reason=y elapsed=1.0 ms bounds=0,0,0,0 mono=10.500\n")
+        self.assertEqual(q.interleave_timeline(actions, log, keep=1).count("\n"), 1)
+        self.assertEqual(q.interleave_timeline([], []), "")
+
     def test_a_state_write_the_driver_failed_is_not_a_finding(self):
         injected = ("microide crash-point: failed durable.writing "
                     "(/x/state/projects/p/.session.microide-staging.42.7) with errno 28, pass 1")
