@@ -12,7 +12,7 @@
 -- request or notification from the server. What a request gets is a function of
 -- its method and id, so a replay that sends the same requests sees the same
 -- answers. Every request is answered within two seconds: one the host still
--- counts in flight after that has been lost by the host (monkey_oracles.LspSettle).
+-- counts in flight after that has been lost by the host (monkey_oracles.RequestsSettle).
 local ide = require("microide")
 
 local SERVER = [==[

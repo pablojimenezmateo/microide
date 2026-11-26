@@ -372,6 +372,8 @@ void TestStatusQueryCountsOutstandingLspRequests() {
   Expect(status["lspRequestsInFlight"].IsInt() && status["lspRequestsInFlight"].AsInt() == 2,
          "status should count the outstanding language-server requests");
   lsp.request_in_flight_count = 0;
+  Expect(status["dapRequestsInFlight"].IsInt() && status["dapRequestsInFlight"].AsInt() == 0,
+         "status should report no outstanding debug-adapter request without a debug session");
 }
 
 void TestDocumentsQueryHashesWhatASaveWritesForABufferMadeOpaque() {

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <chrono>
+#include <cstddef>
 #include <optional>
 #include <unordered_map>
 #include <utility>
@@ -52,6 +53,7 @@ class PendingRequestTable {
   }
 
   bool empty() const { return entries_.empty(); }
+  std::size_t size() const { return entries_.size(); }
   void clear() { entries_.clear(); }
 
  private:

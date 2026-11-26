@@ -41,11 +41,11 @@ covered_by = "qa scenarios plugin-* (flows_plugin_api.py); the monkey runs with 
 
 [item."language servers answering out of order"]
 kind = "outside world"
-covered_by = "the monkey's `tooling` profile through tools/qa/plugins/qa-chaos-lsp (a server for `.qachaos` files answering late, twice, under the wrong id, malformed or with neither result nor error first; stale-version diagnostics, server requests), with the LspSettle oracle after a quarter of them; real clangd through plugins/cpp-lsp; WorkspaceLspClient's sequence tests and LspSessionFuzz"
+covered_by = "the monkey's `tooling` profile through tools/qa/plugins/qa-chaos-lsp (a server for `.qachaos` files answering late, twice, under the wrong id, malformed or with neither result nor error first; stale-version diagnostics, server requests), with the RequestsSettle oracle after a quarter of them; real clangd through plugins/cpp-lsp; WorkspaceLspClient's sequence tests and LspSessionFuzz"
 
 [item."debug adapters"]
 kind = "outside world"
-covered_by = "the monkey's `tooling` profile (gdb through plugins/gdb-dap on the fixture's program: breakpoints, runs, steps, sessions; not under rr, which cannot record a debugger's ptrace); qa scenarios dbg-*"
+covered_by = "the monkey's `tooling` profile (gdb through plugins/gdb-dap on the fixture's program: breakpoints, runs, steps, sessions; not under rr, which cannot record a debugger's ptrace) and tools/qa/plugins/qa-chaos-dap (a Python adapter answering late, twice, unsuccessfully or under the wrong seq, stopping threads that do not exist; rr records it), with the RequestsSettle oracle after a quarter of its actions; qa scenarios dbg-*"
 
 [item."remote projects"]
 kind = "remote"

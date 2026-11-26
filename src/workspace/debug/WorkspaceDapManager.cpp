@@ -159,6 +159,14 @@ void DapManager::SetActiveSession(int id) {
   }
 }
 
+std::size_t DapManager::PendingRequestCount() const {
+  std::size_t count = 0;
+  for (const SessionEntry& entry : sessions_) {
+    count += entry.session->Client().PendingRequestCount();
+  }
+  return count;
+}
+
 DebugSession* DapManager::SessionById(int id) {
   for (SessionEntry& entry : sessions_) {
     if (entry.id == id) {

@@ -777,24 +777,24 @@ UNDO_KINDS = frozenset({"editor", "compare", "merge"})
 # take back and the redos put back: the text comes out as format(before), from a
 # history that was exact (soak 76e3925879dc).
 LSP_ANSWER_WAIT_S = 3.0
-# The chaos server's latest reply (qa-chaos-lsp: a late answer, or the right one
-# after a malformed first), and what LspSettle allows past it: the tooling
-# profile's clangd shares the count, and answers its first requests while it
-# builds the file's preamble.
-CHAOS_LSP_LONGEST_S = 2.0
-LSP_SETTLE_S = CHAOS_LSP_LONGEST_S + 8.0
+# The chaos servers' latest reply (qa-chaos-lsp, qa-chaos-dap: a late answer, or
+# the right one after a malformed first), and what RequestsSettle allows past
+# it: the tooling profile's clangd and gdb share the counts, and clangd answers
+# its first requests while it builds the file's preamble.
+CHAOS_LONGEST_S = 2.0
+SETTLE_S = CHAOS_LONGEST_S + 8.0
 
 
-def lsp_in_flight_after(app: Any, wait_s: float) -> int | None:
-    """The language-server requests the app still counts in flight (the
-    `status` query's `lspRequestsInFlight`) once they reach none or `wait_s`
-    (stretched by the slow factor) has passed; None when the app does not
-    answer. A binary without the field -- an old finding's replay -- reads as
-    none."""
+def in_flight_after(app: Any, field: str, wait_s: float) -> int | None:
+    """The requests the app still counts in flight under `field` of the
+    `status` query (`lspRequestsInFlight`, `dapRequestsInFlight`) once they
+    reach none or `wait_s` (stretched by the slow factor) has passed; None when
+    the app does not answer. A binary without the field -- an old finding's
+    replay -- reads as none."""
     deadline = time.monotonic() + wait_s * q.SLOW_FACTOR
     while True:
         try:
-            in_flight = int(app.query("status").get("lspRequestsInFlight") or 0)
+            in_flight = int(app.query("status").get(field) or 0)
         except q.QaFailure:
             return None
         if in_flight == 0 or _past(deadline):
@@ -802,23 +802,35 @@ def lsp_in_flight_after(app: Any, wait_s: float) -> int | None:
         time.sleep(0.02)
 
 
-class LspSettle:
-    """Every request to a language server ends -- answered, failed or dropped --
-    soon after the server's last reply. tools/qa/plugins/qa-chaos-lsp answers
-    each within CHAOS_LSP_LONGEST_S, late, twice, under the wrong id or with the
-    wrong shape; a request the host still counts after that has lost its
-    answer, and waits for the request timeout (or forever, had the count gone
-    below zero). An app that does not answer is Liveness's to report."""
+class RequestsSettle:
+    """Every request to a language server or debug adapter ends -- answered,
+    failed or dropped -- soon after the server's last reply. The chaos servers
+    (tools/qa/plugins/qa-chaos-lsp, qa-chaos-dap) answer each within
+    CHAOS_LONGEST_S, late, twice, under the wrong id or with the wrong shape; a
+    request the host still counts after that has lost its answer, and waits for
+    the request timeout (or forever, had the count gone below zero). An app that
+    does not answer is Liveness's to report."""
 
-    def __init__(self, app: Any) -> None:
+    def __init__(self, app: Any, field: str, server: str, rule: str) -> None:
         self.app = app
+        self.field = field
+        self.server = server
+        self.rule = rule
 
     def check(self) -> list[tuple[str, str]]:
-        in_flight = lsp_in_flight_after(self.app, LSP_SETTLE_S)
+        in_flight = in_flight_after(self.app, self.field, SETTLE_S)
         if not in_flight:
             return []
-        return [("lsp-settle", f"{in_flight} language-server request(s) still in flight "
-                               f"{LSP_SETTLE_S:g} s after the chaos server's last reply was due")]
+        return [(self.rule, f"{in_flight} {self.server} request(s) still in flight "
+                            f"{SETTLE_S:g} s after the chaos server's last reply was due")]
+
+
+def lsp_settle(app: Any) -> RequestsSettle:
+    return RequestsSettle(app, "lspRequestsInFlight", "language-server", "lsp-settle")
+
+
+def dap_settle(app: Any) -> RequestsSettle:
+    return RequestsSettle(app, "dapRequestsInFlight", "debug-adapter", "dap-settle")
 
 
 class UndoAlgebra:
@@ -901,7 +913,7 @@ class UndoAlgebra:
         up to LSP_ANSWER_WAIT_S. A request counts until its answer has been
         applied or dropped, so a format-document's edits are in the buffer once
         this is true."""
-        return lsp_in_flight_after(self.app, LSP_ANSWER_WAIT_S) == 0
+        return in_flight_after(self.app, "lspRequestsInFlight", LSP_ANSWER_WAIT_S) == 0
 
     def _churned_during_check(self, path: str | None, started: float) -> bool:
         """A churn row for `path` from the reload grace before the check began

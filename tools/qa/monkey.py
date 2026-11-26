@@ -740,7 +740,7 @@ PROFILES: dict[str, dict[str, float]] = {
 # server, a debug adapter or the Lua plugin host behind its commands.
 PROFILE_PLUGINS: dict[str, tuple[str, ...]] = {
     "tooling": ("cpp-lsp", "gdb-dap", "todo-highlight", "eol-annotations", "language-tools", "qa-tests",
-                "qa-chaos-lsp"),
+                "qa-chaos-lsp", "qa-chaos-dap"),
     # Self-contained: no network, no tool to install (prettier and eslint run npx).
     "plugins": ("surface-preview", "presentation-demo", "todo-highlight", "eol-annotations", "language-tools"),
 }
@@ -751,7 +751,7 @@ PLUGIN_SETTINGS = ("plugins.inline_surfaces", "plugins.code_lens_above")
 TOOLING_FILES = (("src/scheduler.cpp", 26), ("src/main.cpp", 16), ("include/scheduler.hpp", 26))
 TOOLING_FUNCTIONS = ("taskflow::Scheduler::run", "taskflow::Scheduler::add", "main", "nosuchfunction")
 # Files the chaos language server's actions write and open (apply_external's
-# `chaos-file`), and the share of them LspSettle checks afterwards: it waits out
+# `chaos-file`), and the share of them RequestsSettle checks afterwards: it waits out
 # the server's latest reply, so not after every one.
 CHAOS_FILES = 3
 CHAOS_SETTLE_SHARE = 0.25
@@ -842,7 +842,8 @@ class Monkey:
         self.invariants = mo.InvariantOracle(app)
         self.idle = mo.IdleOracle(app)
         self.structural = mo.StructuralDiffOracle(app)
-        self.lsp_settle = mo.LspSettle(app)
+        self.lsp_settle = mo.lsp_settle(app)
+        self.dap_settle = mo.dap_settle(app)
         self.converge = mo.RemoteConvergence(app, project, host.root, host.open_line()) \
             if host is not None and project is not None else None
         self.new_states = 0
@@ -1469,8 +1470,11 @@ class Monkey:
             self.app.send_line("set-setting debug.enabled true")
             self.app.send_line("open src/scheduler.cpp")
             return "tooling:setup"
-        if self.rng.random() < 0.15:
+        chaos = self.rng.random()
+        if chaos < 0.15:
             return self._chaos_lsp_action()
+        if chaos < 0.27:
+            return self._chaos_dap_action()
         path, lines = self.rng.choice(TOOLING_FILES)
         line = self.rng.randrange(1, lines + 1)
         roll = self.rng.random()
@@ -1544,7 +1548,7 @@ class Monkey:
         """Requests to tools/qa/plugins/qa-chaos-lsp's server, which answers them
         late, twice, malformed or under the wrong id: a fresh file now and then
         (its didOpen and diagnostics), a position in it, a request, a typed edit
-        for a didChange. Sometimes LspSettle afterwards: every request ended."""
+        for a didChange. Sometimes RequestsSettle afterwards: every request ended."""
         self.counter += 1
         name = f"qa-chaos/{chaos_file(self.counter)}"
         if self.rng.random() < 0.3 or not (self.project / name).exists():
@@ -1563,6 +1567,37 @@ class Monkey:
             self.app.report(f"monkey step {self.step_index}", self.lsp_settle.check())
             return "tooling:chaos-settle"
         return f"tooling:chaos:{command.split()[0]}"
+
+    def _chaos_dap_action(self) -> str:
+        """A session of tools/qa/plugins/qa-chaos-dap's adapter, which answers
+        late, twice, unsuccessfully or under the wrong seq and stops threads that
+        do not exist, then the debugger's commands and breakpoints in its file.
+        It is Python, not a ptrace: rr records it. Sometimes RequestsSettle
+        afterwards: every request ended."""
+        self.counter += 1
+        name = f"qa-chaos/{chaos_file(self.counter)}"
+        if not (self.project / name).exists():
+            self.app.record_external({"external": "chaos-file", "target": "", "counter": self.counter})
+            apply_external(self.project, "chaos-file", "", self.counter)
+        absolute = q.quote_arg(str(self.project / name))
+        line = self.rng.randrange(1, 25)
+        roll = self.rng.random()
+        if roll < 0.25:
+            command = f"debug-run --type qachaos {absolute}"
+        elif roll < 0.4:
+            command = self.rng.choice((f"breakpoint-set {absolute} {line}", f"breakpoint-remove {absolute} {line}",
+                                       f"breakpoint-condition {absolute} {line} v0==1",
+                                       f"breakpoint-logmessage {absolute} {line} \"v is {{v0}}\""))
+        else:
+            command = self.rng.choice(DEBUG_COMMANDS)
+            if command == "debug-switch-session":
+                command += f" {self.rng.randrange(0, 3)}"
+        self.app.send_line(command)
+        if self.rng.random() < CHAOS_SETTLE_SHARE:
+            self.app.record_external({"oracle": "dap-settle"})
+            self.app.report(f"monkey step {self.step_index}", self.dap_settle.check())
+            return "tooling:chaos-dap-settle"
+        return f"tooling:chaos-dap:{command.split()[0]}"
 
     def plugin_action(self) -> str:
         """A command a loaded plugin registered (the catalogue's `plugin` rows:
@@ -1947,6 +1982,8 @@ class Monkey:
             self.structural.evidence = {}
         elif name == "lsp-settle":
             self.app.report(label, self.lsp_settle.check())
+        elif name == "dap-settle":
+            self.app.report(label, self.dap_settle.check())
         elif name == "converge" and self.converge is not None:
             self._report_with_evidence(label, self.converge.check(), self.converge.evidence)
             self.converge.evidence = {}

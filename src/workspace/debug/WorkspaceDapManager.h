@@ -70,6 +70,7 @@ class DapManager {
   void SetActiveSession(int id);
   DebugSession* SessionById(int id);
   std::size_t SessionCount() const { return sessions_.size(); }
+  std::size_t PendingRequestCount() const;
   void SetSessionAttention(int id, bool attention);
   std::vector<DapSessionInfo> Sessions() const;
   std::string SessionLabel(int id) const;

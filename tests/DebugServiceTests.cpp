@@ -510,6 +510,39 @@ void TestDebugSessionPausesAThreadAnnouncedByEvent() {
   manager.ShutdownAll();
 }
 
+void TestDapManagerCountsTheRequestsStillInFlight() {
+  TemporaryDirectory temp_dir;
+  const auto server_path = temp_dir.path() / "adapter.py";
+  WriteFile(server_path, std::string(MockAdapterSource()));
+
+  DapManager manager;
+  Expect(manager.PendingRequestCount() == 0, "no session has no request in flight");
+  manager.RegisterAdapter("mock", platform::LocalProcessLauncher(),
+                          MockAdapterCommand(server_path, "pause_silent_threads"));
+  CapturedSession captured;
+  LaunchConfig config;
+  config.type = "mock";
+  config.request = "launch";
+  Expect(manager.StartSession(config, MakeCallbacks(captured)), "session should start");
+  Expect(PollUntil(manager,
+                   [&]() {
+                     const auto* session = manager.ActiveSession();
+                     return session != nullptr && session->CurrentState() == DebugSession::State::Running &&
+                            manager.PendingRequestCount() == 0;
+                   }),
+         "the handshake's requests are all answered once the session runs");
+  for (int i = 0; i < 2; ++i) {
+    Expect(manager.ActiveSession()->Client().SendRequestAsync(
+               "threads", util::JsonValue(nullptr), [](const codec::DapResponse&) {}),
+           "a threads request is sent");
+  }
+  Expect(manager.PendingRequestCount() == 2,
+         "two threads requests the adapter never answers while the program runs are in flight, counted " +
+             std::to_string(manager.PendingRequestCount()));
+  manager.ShutdownAll();
+  Expect(manager.PendingRequestCount() == 0, "a shut-down session has no request in flight");
+}
+
 void TestTeardownEndsALaunchedDebuggeeAndSparesAnAttachedOne() {
   TemporaryDirectory temp_dir;
   const auto server_path = temp_dir.path() / "adapter.py";
@@ -2902,6 +2935,8 @@ void RegisterDebugServiceTests(std::vector<TestCase>& tests) {
           TestDebugConsoleOutlivesItsSessionUntilTheNext);
   AddTest(tests, "DebugService/SessionPausesAThreadAnnouncedByEvent",
           TestDebugSessionPausesAThreadAnnouncedByEvent);
+  AddTest(tests, "DebugService/DapManagerCountsTheRequestsStillInFlight",
+          TestDapManagerCountsTheRequestsStillInFlight);
   AddTest(tests, "DebugService/SessionReverseStepAndContinue",
           TestDebugSessionReverseStepAndContinue);
   AddTest(tests, "DebugService/SessionReverseGatedOnCapability",

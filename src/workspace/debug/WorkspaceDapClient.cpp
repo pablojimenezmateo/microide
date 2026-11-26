@@ -65,9 +65,11 @@ std::string DapClient::LastError() const {
 
 void DapClient::DrainCallbacks() { impl_->main_mailbox.Drain(); }
 
-bool DapClient::HasPendingRequests() const {
+bool DapClient::HasPendingRequests() const { return PendingRequestCount() > 0; }
+
+std::size_t DapClient::PendingRequestCount() const {
   std::lock_guard lock(impl_->mutex);
-  return !impl_->pending_requests.empty() || impl_->main_mailbox.PendingCount() > 0;
+  return impl_->pending_requests.size() + static_cast<std::size_t>(impl_->main_mailbox.PendingCount());
 }
 
 bool DapClient::SendRequestAsync(const std::string& command, util::JsonValue arguments,

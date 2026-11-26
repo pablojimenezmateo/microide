@@ -1328,6 +1328,8 @@ util::JsonValue ControlChannelService::BuildStatus() const {
   object["debugStopped"] = util::JsonValue(state.debug_execution.stopped);
   object["lspRequestsInFlight"] =
       util::JsonValue(static_cast<std::int64_t>(state.lsp.request_in_flight_count));
+  object["dapRequestsInFlight"] = util::JsonValue(
+      static_cast<std::int64_t>(state.dap_manager == nullptr ? 0 : state.dap_manager->PendingRequestCount()));
   object["connections"] = util::JsonValue(static_cast<std::int64_t>(server_.ConnectionCount()));
   object["renderer"] = util::JsonValue(context_->render_driver_name);
   if (const std::optional<util::HeapUsage> heap = util::CurrentHeapUsage()) {

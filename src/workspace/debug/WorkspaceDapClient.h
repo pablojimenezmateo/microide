@@ -7,6 +7,7 @@
 
 #include <SDL3/SDL.h>
 
+#include <cstddef>
 #include <functional>
 #include <memory>
 #include <string>
@@ -48,6 +49,7 @@ class DapClient {
   void DrainCallbacks();
 
   bool HasPendingRequests() const;
+  std::size_t PendingRequestCount() const;
 
   bool SendRequestAsync(const std::string& command, util::JsonValue arguments,
                         ResponseCallback callback);

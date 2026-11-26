@@ -410,7 +410,9 @@ route (arrows, Enter, Delete, Escape) a person uses for the same buttons.
 the tracked requests (format, rename, navigation, completion, hover) whose answer
 the app has neither applied nor dropped yet. A format-document answers
 asynchronously and lands as an edit of its own, so a driver that reads a buffer to
-compare it later (tools/qa's undo rule) waits for zero first.
+compare it later (tools/qa's undo rule) waits for zero first. `dapRequestsInFlight`
+counts the same for every debug session: requests sent to an adapter whose response
+has not been handled yet (answered, failed or timed out), across all sessions.
 
 **Remote projects.** For a remote active project `status` carries
 `remote: {host, hostRoot, state, files, filesPending, unsentPushes, conflicts,

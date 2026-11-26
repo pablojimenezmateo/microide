@@ -380,12 +380,14 @@ What it left, by workstream:
    whose server answers each request on time, late, twice, with an error, with the
    wrong shape, after a stray id, under a string id or with neither result nor
    error first, and sends stale-version diagnostics and server requests; the
-   `LspSettle` oracle then holds every request ended within the server's latest
-   reply plus a margin). Still not: multi-project switching (`project-open`
-   re-roots the session away from the scratch copy), a debug adapter that answers
-   out of order inside the soak (the soak runs real gdb; `DapSessionFuzz` has the
-   scripted one), and the 50 MB / submodule / large-history / empty-folder
-   fixtures.
+   `RequestsSettle` oracle then holds every request ended within the server's latest
+   reply plus a margin), and a debug adapter that does the same (2026-11-26:
+   tools/qa/plugins/qa-chaos-dap, a Python adapter for a pretend program, so rr
+   records its sessions too; the same oracle on the `status` query's new
+   `dapRequestsInFlight`; its first run found the debug toolbar on a compare's
+   Previous Change, f992ef5ff). Still not: multi-project switching (`project-open`
+   re-roots the session away from the scratch copy) and the 50 MB / submodule /
+   large-history / empty-folder fixtures.
 6. **DONE 2026-11-25:** `FrameLatency` reads each frame's prepare-and-paint
    time off the redraw trace (`elapsed=`) on every timed monkey step and files
    a frame over 0.5 s (slow factor applied) once per frame reason, the trace
