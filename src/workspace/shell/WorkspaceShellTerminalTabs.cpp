@@ -372,7 +372,6 @@ RemoteHostService& WorkspaceShell::MakeRemoteHostService() {
             }
           },
   });
-  glue_->remote_host_service->SetWakeChannel(project_file_event_type_);
   return *glue_->remote_host_service;
 }
 

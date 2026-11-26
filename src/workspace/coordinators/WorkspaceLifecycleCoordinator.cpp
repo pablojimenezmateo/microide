@@ -226,6 +226,7 @@ void WorkspaceShell::RegisterLifecycleWakeEvents() {
   file_read_service_.SetWakeChannel(project_file_event_type_);
   file_index_refresh_mailbox_.SetWakeChannel(project_file_event_type_);
   project_replace_mailbox_.SetWakeChannel(project_file_event_type_);
+  MakeRemoteHostService().SetWakeChannel(project_file_event_type_);
   project_open_dialog_event_type_ = register_wake("open-dialog");
 
   lsp_event_type_ = register_wake("lsp");

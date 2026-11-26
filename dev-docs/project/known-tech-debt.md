@@ -16,27 +16,6 @@ moved, verbatim, to `guidelines/tech-debt/archive/2026-11-08-resolved-debt-ledge
 
 ## Open items
 
-### TD-2026-11-26-457 — the `qa-remote` lane is red: conflict rows, host deletes and renames, host terminals. [OPEN]
-
-`tools/run-checks.sh qa-remote` (not in CI) fails the same 9-10 checks on
-95614b938 and e1401e81a, on both the loopback and the slow-link host, so it
-predates the session that found it (2026-11-26). Seen:
-
-- `Q.one-left-gets-its-own-row`: after Keep Local settles one of two
-  conflicts (`conflicts` 1), the Conflicts view still lists the settled
-  `[x] LICENSE` beside the one left (six rows, not five), and no per-file
-  notification replaces the counted one.
-- `Y.archived-folder-is-a-one-sided-row`, `Y.delete-of-a-host-edited-file-is-a-row`,
-  `Y.folder-delete-reaches-host`, `Y.rename-of-a-host-edited-file-parks`: no
-  one-sided row appears; the remote is `disconnected` or `starting` when the
-  check reads it. The `take-remote` / `keep-local` follow-ups then time out
-  with an empty reply.
-- `F.reconnecting-row`, `V.cpu-rises`, `V.delete-ends-it` (the confirm prompt
-  is up but the host terminal's shell is already gone).
-
-Next: find the last green commit (the lane's loopback half alone is ~15 min)
-and bisect; then a failing-first test per defect.
-
 ### TD-2026-11-24-456 — `WorkspaceShell` is still the god class; its wiring factories are the largest functions. [OPEN]
 
 A 2026-11-24 cleanup pass (duplication, long functions, facades, dead code; net

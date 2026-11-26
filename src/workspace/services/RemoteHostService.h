@@ -102,6 +102,7 @@ class RemoteHostService {
   RemoteHostService& operator=(const RemoteHostService&) = delete;
 
   void SetWakeChannel(util::WakeChannel channel) { mailbox_.SetWakeChannel(channel); }
+  util::WakeChannel wake_channel() const { return mailbox_.wake_channel(); }
   bool DrainCompletions();
 
   bool OpenLocalTerminal();

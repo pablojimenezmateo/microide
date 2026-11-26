@@ -1,5 +1,6 @@
 #include "TestSupport.h"
 #include "RemoteServerTestSupport.h"
+#include "TestSupportSdl.h"
 
 #include "platform/UnixSocket.h"
 #include "project/remote/RemoteProtocol.h"
@@ -318,12 +319,24 @@ void TestHostViewListsEveryOpenHost() {
   }
 }
 
+
+void TestTheHostServiceWakesTheLoopWhenEverItWasMade() {
+  EnsureDummySdlVideoInitialized();
+  workspace::WorkspaceShell shell;
+  workspace::RemoteHostService& hosts = workspace::WorkspaceShell::TestAccess::RemoteHosts(shell);
+  Expect(hosts.wake_channel() == 0, "a service made before the wake events are registered has no channel yet");
+  workspace::WorkspaceShell::TestAccess::RegisterLifecycleWakeEvents(shell);
+  Expect(hosts.wake_channel() != 0,
+         "registering the wake events gives the host service the channel its replies wake the loop on");
+}
 }
 
 void RegisterRemoteHostViewTests(std::vector<TestCase>& tests) {
   AddTest(tests, "RemoteHostView/ShowsAndEndsWhatTheHostRuns", TestHostViewShowsAndEndsWhatTheHostRuns);
   AddTest(tests, "RemoteHostView/RowsFromAnOlderServer", TestHostRowsFromAnOlderServer);
   AddTest(tests, "RemoteHostView/ListsEveryOpenHost", TestHostViewListsEveryOpenHost);
+  AddTest(tests, "RemoteHostView/TheHostServiceWakesTheLoopWhenEverItWasMade",
+          TestTheHostServiceWakesTheLoopWhenEverItWasMade);
 }
 
 }

@@ -352,3 +352,19 @@ reports a `recorder` finding the ledger does not book; `soak.py health` counts
 them, and that count is the signal to look for the next one.
 
 **Closed 2026-11-25** (the user's call): the patch is not sent upstream. It stays in `tools/soak/rr-tee.patch` with the rebuild steps above, and a machine with a stock rr lists `terminal` and `world` in `UNRECORDED_PROFILES`; `soak.py health`'s `recorder` count remains the signal for the next unsupported call.
+
+### TD-2026-11-26-457 — the `qa-remote` lane is red: conflict rows, host deletes and renames, host terminals. [RESOLVED 2026-11-26]
+
+`tools/run-checks.sh qa-remote` (not in CI) failed 9-10 checks on the loopback
+and slow-link hosts: a settled conflict stayed in the Conflicts view, host-side
+deletes and renames never became one-sided rows, Take Remote / Keep Local timed
+out, host terminals and the reconnecting row misbehaved. Bisected (last green
+5f851c488) to 23689d858, "LifecycleCoordinator reaches persistence writes,
+remote hosts and the control channel directly": binding `MakeRemoteHostService()`
+into the coordinator's Services made the service when the coordinator was first
+built -- before `RegisterLifecycleWakeEvents` had registered the `project-files`
+event it set as its wake channel at construction. Its mailbox kept channel 0, so
+no reply from the host server woke the loop. Fixed: the channel is given to the
+service where every other wake consumer gets it, after registration, whenever the
+service was made (`RemoteHostView/TheHostServiceWakesTheLoopWhenEverItWasMade`,
+failing first). The loopback suite: 10 failed -> 0.

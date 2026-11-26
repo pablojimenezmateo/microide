@@ -21,6 +21,7 @@ class MainThreadMailbox {
   MainThreadMailbox& operator=(const MainThreadMailbox&) = delete;
 
   void SetWakeChannel(WakeChannel channel);
+  WakeChannel wake_channel() const { return wake_channel_.load(std::memory_order_acquire); }
 
   void Post(Action action);
 
