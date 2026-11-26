@@ -4263,9 +4263,14 @@ class ResourceSmallTests(unittest.TestCase):
         self.assertEqual(oracle.rss_steps, [])
 
     def test_threads_are_counted_by_name(self):
+        import ctypes
         import threading
         stop = threading.Event()
-        threads = [threading.Thread(target=stop.wait, name="qa-same") for _ in range(2)]
+
+        def named_wait():
+            ctypes.CDLL(None, use_errno=True).prctl(15, b"qa-same", 0, 0, 0)
+            stop.wait()
+        threads = [threading.Thread(target=named_wait) for _ in range(2)]
         for thread in threads:
             thread.start()
         try:
