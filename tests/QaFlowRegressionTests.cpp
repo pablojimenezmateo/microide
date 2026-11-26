@@ -3786,6 +3786,16 @@ void TestTheDebugToolbarCoversNoOtherControl() {
   Expect(TestAccess::OpenMergeEditor(fixture.shell, base, incoming, current, current), "the merge opens");
   TestAccess::NoteLayoutInputsChanged(fixture.shell);
   Expect(covered("a merge in the focused pane") > 0, "the toolbar still shows over the merge");
+
+  const std::filesystem::path left = fixture.temp_dir.path() / "left.c";
+  const std::filesystem::path right = fixture.temp_dir.path() / "right.c";
+  WriteFile(left, "int main() {\n  return 0;\n}\n");
+  WriteFile(right, "int main() {\n  return 1;\n}\n");
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "compare-files " + left.string() + " " + right.string()),
+         "the compare opens");
+  TestAccess::NoteLayoutInputsChanged(fixture.shell);
+  Expect(fixture.ElementRect("button:compare/previous-change").has_value(), "the compare shows its header buttons");
+  Expect(covered("a compare in the focused pane") > 0, "the toolbar still shows over the compare");
 }
 
 void TestATabActivatedWithNoRequestRepaintsItsStrip() {

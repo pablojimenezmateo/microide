@@ -74,6 +74,10 @@ std::optional<float> WorkspaceShell::DebugToolbarAvoidBelowY(const WorkspaceLayo
     const float toolbar_bottom = merge.secondary_button_y + kMergeToolbarButtonHeight;
     below = std::max(below.value_or(toolbar_bottom), toolbar_bottom);
   }
+  if (const CompareTabState* compare_tab = ActiveCompareTab(); compare_tab != nullptr) {
+    const float header_bottom = ComputeCompareSurfaceLayout(ActiveTabSurface(layout), *compare_tab).rows_y;
+    below = std::max(below.value_or(header_bottom), header_bottom);
+  }
   return below;
 }
 
