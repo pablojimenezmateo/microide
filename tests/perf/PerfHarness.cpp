@@ -849,6 +849,13 @@ bool ScenarioContext::SaveActiveTab() {
   return workspace::WorkspaceShell::TestAccess::SaveTab(shell_, index);
 }
 
+bool ScenarioContext::BeginSaveActiveTab() {
+  return workspace::WorkspaceShell::TestAccess::BeginSaveTab(
+      shell_, workspace::WorkspaceShell::TestAccess::ActiveTabIndex(shell_));
+}
+
+void ScenarioContext::SettleFileWrites() { workspace::WorkspaceShell::TestAccess::SettleFileWrites(shell_); }
+
 void ScenarioContext::RegisterVirtualDocument(const workspace::VirtualDocumentSpec& spec) {
   workspace::WorkspaceShell::TestAccess::RegisterVirtualDocument(shell_, spec);
 }

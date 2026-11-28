@@ -1,5 +1,7 @@
 #pragma once
 
+#include "project/FileWriteService.h"
+
 #include <cstdint>
 #include <cstddef>
 #include <filesystem>
@@ -8,6 +10,7 @@
 #include <string>
 #include <string_view>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 #include "util/TextFileIO.h"
@@ -53,13 +56,20 @@ class TabCoordinator {
     std::function<void(const std::filesystem::path&, std::string_view reason)> notify_save_failed;
     std::function<std::uint64_t(const std::filesystem::path&)> begin_async_file_read;
     std::function<void(std::uint64_t)> cancel_async_file_read;
+    std::function<void(std::uint64_t tab_id, bool saved)> settle_save;
+    std::function<void(const std::filesystem::path&)> recheck_disk_after_save;
   };
 
   TabCoordinator(ProjectCatalogState& project_catalog,
                  ProjectWorkspaceState& current_project_state,
+                 project::FileWriteService& file_writes,
                  Operations operations);
 
   bool Save(std::size_t index, SaveMode mode);
+  void FinishAsyncSave(std::uint64_t tab_id, const editor::TextViewport::PreparedSave& prepared,
+                       editor::TextViewport::WrittenSave written);
+  [[nodiscard]] std::vector<std::string> TakeLandedSaveFailures() { return std::exchange(landed_save_failures_, {}); }
+  static std::string SaveFailureMessage(const std::filesystem::path& path, std::string_view reason);
   bool SaveGroupTab(std::size_t group_index, std::size_t index,
                     SaveMode mode);
   bool SaveGroupTabAs(std::size_t group_index, std::size_t index,
@@ -134,6 +144,7 @@ class TabCoordinator {
                              const std::filesystem::path& normalized_path);
   bool RefuseIfReadOnly(const std::filesystem::path& normalized_path, bool banner_shows);
   enum class PaneSave { Written, Deferred, Refused };
+  bool BeginAsyncSave(TabEntry& tab, SaveMode mode);
   PaneSave WritePaneViewport(editor::TextViewport& viewport,
                              editor::AsyncBufferWork& pending_format_save, SaveMode mode);
   void AfterFileSaved(const std::filesystem::path& normalized_path);
@@ -189,7 +200,9 @@ class TabCoordinator {
 
   ProjectCatalogState& project_catalog_;
   ProjectWorkspaceState& state_;
+  project::FileWriteService& file_writes_;
   Operations operations_;
+  std::vector<std::string> landed_save_failures_;
 };
 
 }

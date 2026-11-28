@@ -48,6 +48,7 @@ TabCoordinator WorkspaceShell::MakeTabCoordinator() {
   return TabCoordinator(
       context_.project_catalog,
       context_.current_project_state,
+      file_io_.writes,
       TabCoordinator::Operations{
           .invalidate_editor_blame_path =
               [this](const std::filesystem::path& path) { InvalidateEditorBlamePath(path); },
@@ -118,14 +119,7 @@ TabCoordinator WorkspaceShell::MakeTabCoordinator() {
               },
           .notify_save_failed =
               [this](const std::filesystem::path& path, std::string_view reason) {
-                const std::string name =
-                    path.empty() ? std::string("file") : path.filename().string();
-                std::string message = "Failed to save " + name;
-                if (!reason.empty()) {
-                  message += ": ";
-                  message += reason;
-                }
-                Notify(NotificationService::Tone::Error, message);
+                Notify(NotificationService::Tone::Error, TabCoordinator::SaveFailureMessage(path, reason));
               },
           .begin_async_file_read =
               [this](const std::filesystem::path& path) {
@@ -148,7 +142,7 @@ TabCoordinator WorkspaceShell::MakeTabCoordinator() {
                 }
                 const EditorPreferences preferences = context_.current_project_state.editor_preferences;
                 std::optional<std::string> detect_on_open = GetSettingValue("editor.indent.detect_on_open");
-                return file_read_service_.Begin({
+                return file_io_.reads.Begin({
                     .path = path,
                     .on_worker =
                         [loaded, path, editor_config = editor_config, preferences,
@@ -178,7 +172,19 @@ TabCoordinator WorkspaceShell::MakeTabCoordinator() {
                         },
                 });
               },
-          .cancel_async_file_read = [this](std::uint64_t id) { file_read_service_.Cancel(id); },
+          .cancel_async_file_read = [this](std::uint64_t id) { file_io_.reads.Cancel(id); },
+          .settle_save =
+              [this](std::uint64_t tab_id, bool saved) {
+                MakeDirtyPromptCoordinator(MakeEditorTabService(), MakePromptSurfaceService())
+                    .SettleSave(tab_id, saved);
+                RequestPreparedFrame();
+              },
+          .recheck_disk_after_save =
+              [this](const std::filesystem::path& path) {
+                ApplyProjectChangeBatch(project::ProjectChangeBatch{
+                    .file_changes = {project::ProjectFileChange{.kind = project::ProjectFileChangeKind::Modified,
+                                                                .absolute_path = path}}});
+              },
       });
 }
 
@@ -312,7 +318,9 @@ void WorkspaceShell::ApplyDeferredSaveFormat(
         }
       }
       const bool saved = SaveGroupTab(group_index, tab_index, SaveMode::SkipTransforms);
-      MakeDirtyPromptCoordinator(editor_tabs, prompt_surfaces).SettleSave(tab_id, saved);
+      if (!view->save_in_flight()) {
+        MakeDirtyPromptCoordinator(editor_tabs, prompt_surfaces).SettleSave(tab_id, saved);
+      }
       RequestPreparedFrame();
       RequestPreparedFrame();
       return;
@@ -402,7 +410,7 @@ void WorkspaceShell::ShareLoadedBufferWithWaitingTabs(const std::filesystem::pat
         continue;
       }
       if (waiting.pending_load.armed()) {
-        file_read_service_.Cancel(waiting.pending_load.id());
+        file_io_.reads.Cancel(waiting.pending_load.id());
         waiting.pending_load.Disarm();
       }
       waiting.viewport = loaded;

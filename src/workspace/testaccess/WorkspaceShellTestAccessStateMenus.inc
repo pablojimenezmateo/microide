@@ -38,6 +38,7 @@
   static void ConfirmDirtyPrompt(WorkspaceShell& shell, int selected_action) {
     shell.context_.prompts.dirty.selected_action = selected_action;
     shell.ConfirmDirtyPrompt();
+    shell.file_io_.writes.Flush();
   }
   static void ShowDirtyPromptForQuit(WorkspaceShell& shell) {
     shell.ShowDirtyPromptForQuit();

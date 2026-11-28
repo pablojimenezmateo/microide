@@ -223,7 +223,8 @@ void WorkspaceShell::RegisterLifecycleWakeEvents() {
 
   project_file_event_type_ = register_wake("project-files");
   save_formatter_service_.SetWakeChannel(project_file_event_type_);
-  file_read_service_.SetWakeChannel(project_file_event_type_);
+  file_io_.reads.SetWakeChannel(project_file_event_type_);
+  file_io_.writes.SetWakeChannel(project_file_event_type_);
   file_index_refresh_mailbox_.SetWakeChannel(project_file_event_type_);
   project_replace_mailbox_.SetWakeChannel(project_file_event_type_);
   MakeRemoteHostService().SetWakeChannel(project_file_event_type_);
@@ -381,12 +382,13 @@ bool WorkspaceShell::Initialize(const std::filesystem::path& project_root) {
 }
 
 void WorkspaceShell::Shutdown() {
-  file_read_service_.CancelAllAndFlush();
+  file_io_.reads.CancelAllAndFlush();
+  file_io_.writes.Flush();
   MakeLifecycleCoordinator().Shutdown();
 }
 
 void WorkspaceShell::RequestQuit(bool forced) {
-  SettleTabIoBeforeTeardown(save_formatter_service_, file_read_service_);
+  SettleTabIoBeforeTeardown(save_formatter_service_, file_io_);
   if (forced && context_.prompts.dirty_visible) {
     DismissDirtyPrompt(false);
   }

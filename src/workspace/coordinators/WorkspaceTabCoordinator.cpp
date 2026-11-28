@@ -44,9 +44,11 @@ std::string EditorTabLabel(const editor::TextViewport& viewport, std::uint32_t u
 
 TabCoordinator::TabCoordinator(ProjectCatalogState& project_catalog,
                                ProjectWorkspaceState& current_project_state,
+                               project::FileWriteService& file_writes,
                                Operations operations)
     : project_catalog_(project_catalog),
       state_(current_project_state),
+      file_writes_(file_writes),
       operations_(std::move(operations)) {}
 
 
@@ -141,6 +143,10 @@ bool TabCoordinator::SaveGroupTab(std::size_t group_index, std::size_t index, Sa
     }
   }
   editor_state->pending_format_save.Disarm();
+  if (mode != SaveMode::Blocking) {
+    return BeginAsyncSave(group.open_tabs[index], mode);
+  }
+  file_writes_.Flush();
   if (std::error_code why; !candidate->Save(state_.write_gate(), &why, SaveTransformsFor(mode))) {
     if (operations_.notify_save_failed) {
       operations_.notify_save_failed(candidate->path(), util::DescribeWriteError(why));
@@ -150,6 +156,69 @@ bool TabCoordinator::SaveGroupTab(std::size_t group_index, std::size_t index, Sa
   operations_.request_frame();
   AfterFileSaved(normalized_path);
   return true;
+}
+
+std::string TabCoordinator::SaveFailureMessage(const std::filesystem::path& path, std::string_view reason) {
+  std::string message = "Failed to save " + (path.empty() ? std::string("file") : path.filename().string());
+  if (!reason.empty()) {
+    message += ": ";
+    message += reason;
+  }
+  return message;
+}
+
+bool TabCoordinator::BeginAsyncSave(TabEntry& tab, SaveMode mode) {
+  editor::TextViewport& viewport = tab.editor_state->viewport;
+  std::optional<editor::TextViewport::PreparedSave> prepared = viewport.PrepareSave(SaveTransformsFor(mode));
+  if (!prepared.has_value()) {
+    if (operations_.notify_save_failed) {
+      operations_.notify_save_failed(viewport.path(), util::DescribeWriteError(std::error_code{}));
+    }
+    return false;
+  }
+  viewport.NoteSaveInFlight();
+  const std::uint64_t tab_id = EnsureTabStableId(tab);
+  file_writes_.Begin([this, tab_id, prepared = std::move(*prepared),
+                      &gate = state_.write_gate()]() -> project::FileWriteService::Continuation {
+    auto written =
+        std::make_shared<editor::TextViewport::WrittenSave>(editor::TextViewport::WritePreparedSave(prepared, gate));
+    return [this, tab_id, prepared, written] { FinishAsyncSave(tab_id, prepared, std::move(*written)); };
+  });
+  return true;
+}
+
+void TabCoordinator::FinishAsyncSave(std::uint64_t tab_id, const editor::TextViewport::PreparedSave& prepared,
+                                     editor::TextViewport::WrittenSave written) {
+  const bool wrote = written.result.ok;
+  if (!wrote) {
+    const std::string reason = util::DescribeWriteError(written.result.error);
+    landed_save_failures_.push_back(SaveFailureMessage(prepared.path, reason));
+    util::InvokeIfSet(operations_.notify_save_failed, prepared.path, reason);
+  }
+  editor::TextViewport* viewport = nullptr;
+  for (EditorGroup& group : state_.editor_groups) {
+    for (TabEntry& tab : group.open_tabs) {
+      if (editor::TextViewport* view = LoadedBufferViewOf(tab);
+          view != nullptr && view->HoldsDocument(prepared.document) && (viewport == nullptr || tab.stable_id == tab_id)) {
+        viewport = view;
+      }
+    }
+  }
+  bool applied = false;
+  if (viewport != nullptr) {
+    viewport->NoteSaveLanded();
+    const util::FileSignature signature = written.result.signature;
+    applied = viewport->ApplyWrittenSave(prepared, std::move(written));
+    operations_.request_frame();
+    if (applied) {
+      const std::filesystem::path normalized_path = prepared.path.lexically_normal();
+      AfterFileSaved(normalized_path);
+      if (!viewport->save_in_flight() && !util::StatFileSignature(prepared.path).SameStatAs(signature)) {
+        util::InvokeIfSet(operations_.recheck_disk_after_save, normalized_path);
+      }
+    }
+  }
+  util::InvokeIfSet(operations_.settle_save, tab_id, wrote && applied);
 }
 
 TabCoordinator::PaneSave TabCoordinator::WritePaneViewport(
@@ -174,6 +243,7 @@ TabCoordinator::PaneSave TabCoordinator::WritePaneViewport(
       !RefuseIfReadOnly(normalized_path, false)) {
     return PaneSave::Refused;
   }
+  file_writes_.Flush();
   if (std::error_code why; !viewport.Save(state_.write_gate(), &why, SaveTransformsFor(mode))) {
     if (operations_.notify_save_failed) {
       operations_.notify_save_failed(viewport.path(), util::DescribeWriteError(why));
@@ -741,7 +811,7 @@ TabCoordinator::SaveForCloseResult TabCoordinator::SaveForClose(std::size_t inde
   }
   EditorGroup& group = state_.editor_groups[group_index];
   if (index < group.open_tabs.size() && group.open_tabs[index].editor_state.has_value() &&
-      group.open_tabs[index].editor_state->pending_format_save.armed()) {
+      group.open_tabs[index].editor_state->save_pending()) {
     return {.saved = true, .deferred_tab_id = EnsureTabStableId(group.open_tabs[index])};
   }
   Close(index);

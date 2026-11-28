@@ -1,4 +1,5 @@
 #include "workspace/shell/WorkspaceShell.h"
+#include "workspace/services/EditorTabService.h"
 
 #include "workspace/services/RemoteHostService.h"
 #include "workspace/shell/ShellGlueCache.h"
@@ -245,7 +246,13 @@ ControlChannelService::CommandOutcome WorkspaceShell::ExecuteControlCommand(
   ControlChannelService::CommandOutcome outcome;
   std::string& feedback = context_.current_project_state.panel.feedback.text;
   feedback.clear();
+  (void)MakeEditorTabService().TakeLandedSaveFailures();
   outcome.ok = MakeCommandLineCoordinator().ExecuteCommandLine(command_line);
+  file_io_.writes.Flush();
+  if (const std::vector<std::string> failed = MakeEditorTabService().TakeLandedSaveFailures(); !failed.empty()) {
+    outcome.ok = false;
+    feedback = failed.front();
+  }
   if (ModalOverlayLostFocus(context_.current_project_state)) {
     const FocusTarget kept = context_.current_project_state.surface.focus;
     DismissOverlay();

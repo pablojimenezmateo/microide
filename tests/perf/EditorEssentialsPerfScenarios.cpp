@@ -8,6 +8,8 @@
 #include "workspace/shell/WorkspaceShellTestAccess.h"
 
 #include <cstdio>
+#include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <optional>
 #include <stdexcept>
@@ -645,6 +647,36 @@ void RunEditorSaveNormalization(ScenarioContext& context) {
   context.PumpFrames(1);
 }
 
+void RunEditorSaveLargeBuffer(ScenarioContext& context) {
+  std::error_code ec;
+  const std::filesystem::path dir = std::filesystem::temp_directory_path(ec) / "microide_perf_save_large";
+  std::filesystem::create_directories(dir, ec);
+  const std::filesystem::path file = dir / "large.txt";
+  {
+    std::ofstream out(file, std::ios::binary | std::ios::trunc);
+    std::string line(120, 'x');
+    line.back() = '\n';
+    for (int i = 0; i < 50 * 1024 * 1024 / 120; ++i) {
+      out << line;
+    }
+  }
+  if (!std::filesystem::exists(file, ec)) {
+    throw std::runtime_error("editor_save_large_buffer: could not write the fixture");
+  }
+  (void)context.Open("tests/perf/fixtures/small_project");
+  context.OpenTab(file);
+  context.PumpFrames(2);
+  context.Type("y");
+  context.Measure("save.large_buffer_50mb", [&] {
+    if (!context.BeginSaveActiveTab()) {
+      throw std::runtime_error("save tab failed");
+    }
+  });
+  context.SettleFileWrites();
+  context.PumpFrames(1);
+  std::filesystem::remove_all(dir, ec);
+}
+
 void RunSettingsChangeManyTabs(ScenarioContext& context) {
   const std::filesystem::path project = "tests/perf/fixtures/settings_tabs_project";
   if (!RequireFixture(context, project, "settings_change_many_tabs")) {
@@ -1257,6 +1289,11 @@ const ScenarioRegistration g_perf_editor_save_normalization({Scenario{
     .name = "editor_save_normalization",
     .smoke = false,
     .run = RunEditorSaveNormalization,
+}});
+const ScenarioRegistration g_perf_editor_save_large_buffer({Scenario{
+    .name = "editor_save_large_buffer",
+    .smoke = false,
+    .run = RunEditorSaveLargeBuffer,
 }});
 const ScenarioRegistration g_perf_editor_indent_detect_open({Scenario{
     .name = "editor_indent_detect_open",

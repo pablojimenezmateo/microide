@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "workspace/shell/WorkspaceShell.h"
+#include "workspace/shell/WorkspaceShellTestAccess.h"
 
 namespace microide::tests {
 
@@ -139,7 +140,9 @@ class ScopedHeldModifiers {
 inline workspace::WorkspaceShell::EventResult SendKeyDownResult(workspace::WorkspaceShell& shell,
                                                                 SDL_Keycode key,
                                                                 SDL_Keymod modifiers) {
-  return shell.HandleEvent(KeyDownEvent(key, modifiers));
+  workspace::WorkspaceShell::EventResult result = shell.HandleEvent(KeyDownEvent(key, modifiers));
+  workspace::WorkspaceShell::TestAccess::SettleFileWrites(shell);
+  return result;
 }
 
 inline bool SendKeyDown(workspace::WorkspaceShell& shell, SDL_Keycode key, SDL_Keymod modifiers) {
@@ -157,7 +160,9 @@ inline bool SendMouseDown(workspace::WorkspaceShell& shell,
   event.button.x = x;
   event.button.y = y;
   event.button.clicks = clicks;
-  return shell.HandleEvent(event).handled;
+  const bool handled = shell.HandleEvent(event).handled;
+  workspace::WorkspaceShell::TestAccess::SettleFileWrites(shell);
+  return handled;
 }
 
 inline bool SendMouseUp(workspace::WorkspaceShell& shell, float x, float y, Uint8 button) {

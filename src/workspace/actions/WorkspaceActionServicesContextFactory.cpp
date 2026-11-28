@@ -275,7 +275,7 @@ WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
   };
   const auto run_off_shell_thread = [this](std::function<void()> gather, std::function<void()> apply) {
     const std::filesystem::path root = context_.current_project_state.root;
-    (void)file_read_service_.Begin({
+    (void)file_io_.reads.Begin({
         .path = root,
         .on_worker = [gather = std::move(gather)](std::string&) { gather(); },
         .on_complete =

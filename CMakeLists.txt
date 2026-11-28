@@ -401,6 +401,7 @@ set(MICROIDE_KERNEL_SOURCES
   src/project/ProjectId.cpp
   src/project/LocalTreeOps.cpp
   src/project/FileReadService.cpp
+  src/project/FileWriteService.cpp
   src/project/FileWriteGate.cpp
   src/project/GitBlameParser.cpp
   src/project/GitBlameService.cpp
@@ -1688,6 +1689,7 @@ add_executable(microide_kernel_tests
   tests/FileIndexWatcherTests.cpp
   tests/OpenFileWatcherTests.cpp
   tests/FileReadServiceTests.cpp
+  tests/FileWriteServiceTests.cpp
   tests/FileTreeOpsTests.cpp
   tests/DirectoryWalkTests.cpp
   tests/FilesystemTests.cpp

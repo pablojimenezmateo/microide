@@ -181,7 +181,7 @@ bool WorkspaceShell::OpenProjectTab(const std::filesystem::path& project_root,
 
 bool WorkspaceShell::SwitchProject(std::size_t index, bool log_feedback) {
   (void) log_feedback;
-  SettleTabIoBeforeTeardown(save_formatter_service_, file_read_service_);
+  SettleTabIoBeforeTeardown(save_formatter_service_, file_io_);
   if (index >= context_.project_catalog.entries.size()) {
     return false;
   }
@@ -221,7 +221,7 @@ void WorkspaceShell::RequestCloseProject(std::size_t index) {
 }
 
 void WorkspaceShell::CloseProject(std::size_t index) {
-  SettleTabIoBeforeTeardown(save_formatter_service_, file_read_service_);
+  SettleTabIoBeforeTeardown(save_formatter_service_, file_io_);
   const std::filesystem::path closed_root = ProjectCatalogRoot(index);
   if (ProjectWorkspaceState* state = context_.ProjectStateForRoot(closed_root); state != nullptr) {
     MakeTerminalPanelService().ReleaseHostTerminals(*state);

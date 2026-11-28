@@ -131,7 +131,11 @@ client ──JSONL──▶ ControlSocketServer (platform, 1 I/O thread)
   requests on the control SDL wake event (`ConsumeControlCallbacks`), dispatches
   commands through the `Operations.execute_command_line` seam, answers queries by
   reading `WorkspaceContext`, and broadcasts debug events (wired from the
-  `DebugService` operations in `WorkspaceShellPlugins.cpp`).
+  `DebugService` operations in `WorkspaceShellPlugins.cpp`). A command's reply
+  comes after the file writes it started have landed (`ExecuteControlCommand`
+  settles `FileWriteService`): a `save` answers once the file holds the buffer, and
+  a write that failed makes the reply fail with its message. The app's own saves
+  (keys, menus, autosave) write off the main thread and do not wait.
 - `src/workspace/control/ControlProtocol.{h,cpp}` — request/response/event (de)serialize
   plus `ControlChannelHelpText()`, the single source of truth for the protocol
   text rendered by `microide control-help` and the man page.

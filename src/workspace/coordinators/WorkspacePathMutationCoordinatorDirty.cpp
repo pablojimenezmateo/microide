@@ -203,7 +203,7 @@ bool PathMutationCoordinator::ResolveDirtyTabsForPath(
       if (!editor_tabs_.SaveGroupTab(target.group_index, target.tab_index, SaveMode::Deferred)) {
         return false;
       }
-      if (editor_state.pending_format_save.armed()) {
+      if (editor_state.save_pending()) {
         deferred_tab_ids.push_back(EnsureTabStableId(tab));
         continue;
       }

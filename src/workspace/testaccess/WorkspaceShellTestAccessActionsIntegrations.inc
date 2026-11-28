@@ -149,8 +149,9 @@
                             std::vector<std::string> args,
                             WorkspaceShell::ActionSource source =
                                 WorkspaceShell::ActionSource::Menu) {
-    return ActionCoordinator(shell.MakeActionContext())
-        .Execute(id, std::move(args), source);
+    const bool handled = ActionCoordinator(shell.MakeActionContext()).Execute(id, std::move(args), source);
+    shell.file_io_.writes.Flush();
+    return handled;
   }
   static bool OpenPlainComparison(WorkspaceShell& shell, CompareInput left, CompareInput right) {
     return shell.MakeCompareMergeService().diff_tabs().OpenPlainComparison(std::move(left), std::move(right));
@@ -397,18 +398,27 @@
   }
   static AssistService& Assist(WorkspaceShell& shell) { return shell.assist_service_; }
   static bool SaveTabDeferred(WorkspaceShell& shell, std::size_t index) {
-    return shell.SaveTab(index, SaveMode::Deferred);
+    const bool saved = shell.SaveTab(index, SaveMode::Deferred);
+    shell.file_io_.writes.Flush();
+    return saved;
   }
+  static void SettleFileWrites(WorkspaceShell& shell) { shell.file_io_.writes.Flush(); }
+  static bool BeginSaveTab(WorkspaceShell& shell, std::size_t index) { return shell.SaveTab(index, SaveMode::Deferred); }
+  static int PendingFileWriteCount(const WorkspaceShell& shell) { return shell.file_io_.writes.PendingCount(); }
   static bool SaveThenCloseTab(WorkspaceShell& shell, std::size_t index) {
     EditorTabService& editor_tabs = shell.MakeEditorTabService();
     PromptSurfaceService& prompt_surfaces = shell.MakePromptSurfaceService();
-    return shell.MakeDirtyPromptCoordinator(editor_tabs, prompt_surfaces).SaveThenClose(index);
+    const bool saved = shell.MakeDirtyPromptCoordinator(editor_tabs, prompt_surfaces).SaveThenClose(index);
+    shell.file_io_.writes.Flush();
+    return saved;
   }
   static int DrainSaveFormatterCompletions(WorkspaceShell& shell) {
-    return shell.save_formatter_service_.DrainCompletions();
+    const int drained = shell.save_formatter_service_.DrainCompletions();
+    shell.file_io_.writes.Flush();
+    return drained;
   }
   static void FlushPendingFileReads(WorkspaceShell& shell) {
-    shell.file_read_service_.FlushPendingReads();
+    shell.file_io_.reads.FlushPendingReads();
   }
   static void SettleCompareLoads(WorkspaceShell& shell) {
     for (int round = 0; round < 4; ++round) {
@@ -427,7 +437,7 @@
       if (!posted) {
         return;
       }
-      shell.file_read_service_.FlushPendingReads();
+      shell.file_io_.reads.FlushPendingReads();
     }
   }
   static void DeliverCancelledCompareLoad(WorkspaceShell& shell, std::uint64_t id) {
@@ -443,10 +453,10 @@
     return shell.OpenGitConflictMerge(path);
   }
   static int PendingFileReadCount(const WorkspaceShell& shell) {
-    return shell.file_read_service_.PendingCount();
+    return shell.file_io_.reads.PendingCount();
   }
   static std::uint64_t PostedFileReadCount(const WorkspaceShell& shell) {
-    return shell.file_read_service_.PostedCount();
+    return shell.file_io_.reads.PostedCount();
   }
   static TabEntry::EditorTabState::Content GroupTabContentState(const WorkspaceShell& shell,
                                                                 std::size_t group_index,
@@ -471,6 +481,7 @@
   static bool AutosaveArmed(const WorkspaceShell& shell) { return shell.autosave_armed_; }
   static void MaybeAutosaveDirtyTabs(WorkspaceShell& shell, bool on_focus_change) {
     shell.MaybeAutosaveDirtyTabs(on_focus_change);
+    shell.file_io_.writes.Flush();
   }
   static bool SelectTreePath(WorkspaceShell& shell, const std::filesystem::path& path) {
     return shell.context_.current_project_state.directory_tree.SelectPath(path);
@@ -773,7 +784,9 @@
     SDL_KeyboardEvent event{};
     event.key = key;
     event.mod = modifiers;
-    return shell.MakeKeyInputCoordinator().HandleKeyDown(event);
+    const bool handled = shell.MakeKeyInputCoordinator().HandleKeyDown(event);
+    shell.file_io_.writes.Flush();
+    return handled;
   }
   static bool OpenCommitWorkflow(WorkspaceShell& shell) { return shell.OpenCommitWorkflow(); }
   static bool RequestCommitWorkflowCommit(WorkspaceShell& shell) {

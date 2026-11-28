@@ -16,20 +16,26 @@ moved, verbatim, to `guidelines/tech-debt/archive/2026-11-08-resolved-debt-ledge
 
 ## Open items
 
-### TD-2026-11-28-458 — a save writes the whole buffer on the main thread. [OPEN]
+### TD-2026-11-28-458 — a save writes the whole buffer on the main thread. [RESOLVED 2026-11-28]
 
-`TextViewport::Save` serializes the document and writes it (`FileWriteGate::WriteText`)
-on the main thread, so the frame that saves waits for both: for the soak's 50 MB
-`qa-big/huge1.txt`, 3.4 s on ASan (not measured on the default build; a replay of
-that run with a 100 ms budget flagged no frame), where
-qa-deep's monkey met it as a latency finding (runs 46163735387, 46164693799; the
-stall watchdog's stack ended at the save). The QA trace's own share -- it
-serialized and hashed the buffer twice more -- was removed 2026-11-28; what is
-left is the app's. Moving the write off the main thread needs the save's
-contract kept: the dirty flag, `MarkSaved`, the disk signature the conflict check
-compares, the crash-safety flush and a second save of the same buffer while the
-first is in flight all order against the write. Not started; decide whether a
-large-buffer save should be asynchronous, or the budget should exempt it.
+`TextViewport::Save` serialized the document and wrote it on the main thread: 65 ms
+and 437k allocations for a 50 MB buffer on the release build (perf scenario
+`editor_save_large_buffer`), 3.4 s on ASan, where qa-deep's monkey met it (runs
+46163735387, 46164693799). Decided with the user: asynchronous. A save is now
+`PrepareSave` (a `DocumentSnapshot`, its revision and an undo save point) on the
+main thread, `WritePreparedSave` on `project::FileWriteService`'s one writer
+thread (so writes land in the order asked), and `ApplyWrittenSave` at the next
+drain; starting a 50 MB save costs the main thread 0.04 ms and 21 allocations.
+What it keeps: an edit made while the write is in flight leaves the buffer dirty,
+and undoing it is clean again (the undo history's save point); a document reloaded
+meanwhile is not touched; the app's own write is not an outside change while it is
+in flight (`save_in_flight`), and a change made by someone else in that window is
+re-routed once it lands; close, quit, close-project and rename wait for the write
+as they waited for a formatter (`EditorTabState::save_pending`, settled on landing);
+a failed write says why whether or not its tab is still open; `Blocking` saves
+(Save As, the dirty prompt, overwrite) flush the writer first and stay synchronous;
+teardown, project switch and shutdown flush it; a control-channel command replies
+after its writes land. Move to the ledger at the next review.
 
 ### TD-2026-11-16-452 — what the soak still cannot say about a finding, or reach. [OPEN]
 

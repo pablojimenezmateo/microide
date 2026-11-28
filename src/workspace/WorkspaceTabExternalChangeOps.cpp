@@ -129,7 +129,7 @@ TabCoordinator::ExternalChangeVerdict TabCoordinator::ClassifyExternalChange(
       state_.editor_groups, path,
       [&](const editor::TextViewport& viewport, const util::FileSignature& signature,
           const std::filesystem::path&) {
-        if (signature.SameContentAs(viewport.disk_signature())) {
+        if (viewport.save_in_flight() || signature.SameContentAs(viewport.disk_signature())) {
           return true;
         }
         if (!viewport.CouldConfirmDiskContent(signature)) {

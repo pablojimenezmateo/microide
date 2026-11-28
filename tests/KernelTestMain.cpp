@@ -50,6 +50,7 @@ void RegisterTerminalHoverAffordanceTests(std::vector<TestCase>& tests);
 void RegisterWindowPresentationTests(std::vector<TestCase>& tests);
 void RegisterAsyncBufferWorkTests(std::vector<TestCase>& tests);
 void RegisterFileReadServiceTests(std::vector<TestCase>& tests);
+void RegisterFileWriteServiceTests(std::vector<TestCase>& tests);
 void RegisterPhase3Tests(std::vector<TestCase>& tests);
 void RegisterInlineVectorTests(std::vector<TestCase>& tests);
 void RegisterSmallVectorTests(std::vector<TestCase>& tests);
@@ -135,6 +136,7 @@ void RegisterKernelTests(std::vector<TestCase>& tests) {
   RegisterFileIndexTests(tests);
   RegisterAsyncBufferWorkTests(tests);
   RegisterFileReadServiceTests(tests);
+  RegisterFileWriteServiceTests(tests);
   RegisterPluginThreadTests(tests);
   RegisterInlineVectorTests(tests);
   RegisterSmallVectorTests(tests);

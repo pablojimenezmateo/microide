@@ -120,7 +120,7 @@ DiffTabCoordinator WorkspaceShell::MakeDiffTabCoordinator() {
                 auto shared_request =
                     std::make_shared<const CompareTabLoadRequest>(std::move(request));
                 auto result = std::make_shared<CompareTabLoadResult>();
-                return file_read_service_.Begin({
+                return file_io_.reads.Begin({
                     .path = shared_request->path,
                     .on_worker =
                         [shared_request, result](std::string&) { RunCompareTabLoad(*shared_request, *result); },
@@ -140,7 +140,7 @@ DiffTabCoordinator WorkspaceShell::MakeDiffTabCoordinator() {
                 const platform::ProcessLauncher* launcher =
                     &context_.current_project_state.launcher();
                 auto cache = std::make_shared<project::GitRevisionBlobCache>();
-                (void)file_read_service_.Begin({
+                (void)file_io_.reads.Begin({
                     .path = path,
                     .on_worker =
                         [root, launcher, path, cache](std::string&) {
@@ -169,7 +169,7 @@ DiffTabCoordinator WorkspaceShell::MakeDiffTabCoordinator() {
               [this](CompareTabRefreshRequest request) -> std::uint64_t {
                 auto shared_request = std::make_shared<const CompareTabRefreshRequest>(std::move(request));
                 auto sides = std::make_shared<CompareRevisionSides>();
-                return file_read_service_.Begin({
+                return file_io_.reads.Begin({
                     .path = shared_request->path,
                     .on_worker = [shared_request, sides](std::string&) { *sides = ReadCompareRevisionSides(*shared_request); },
                     .on_complete =
@@ -195,7 +195,7 @@ DiffTabCoordinator WorkspaceShell::MakeDiffTabCoordinator() {
                     .read_path = false,
                 });
               },
-          .cancel_file_read = [this](std::uint64_t id) { file_read_service_.Cancel(id); },
+          .cancel_file_read = [this](std::uint64_t id) { file_io_.reads.Cancel(id); },
       });
 }
 

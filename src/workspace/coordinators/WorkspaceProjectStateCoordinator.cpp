@@ -288,7 +288,8 @@ void WorkspaceShell::ResetProjectScopedState(bool show_welcome) {
   git_metadata_tracker_.Reset();
   last_applied_project_change_generation_ = 0;
   pending_external_change_confirms_.clear();
-  file_read_service_.CancelAllAndFlush();
+  file_io_.reads.CancelAllAndFlush();
+  file_io_.writes.Flush();
   MakeMenuCoordinator().CloseTreeContextMenu();
   ClearEditorBlame();
   lsp_service_.RetireCurrentProjectServers();

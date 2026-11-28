@@ -19,6 +19,7 @@
 #include "render/TextRendererBackend.h"
 #include "support/SoftwareCanvas.h"
 #include "workspace/shell/WorkspaceShell.h"
+#include "workspace/shell/WorkspaceShellTestAccess.h"
 
 namespace microide::tests {
 
@@ -131,6 +132,8 @@ inline workspace::RenderInvalidation DispatchEvents(workspace::WorkspaceShell& s
     redraw.Merge(shell.HandleEvent(event).redraw);
     redraw.Merge(shell.ConsumePendingRenderInvalidation());
   }
+  workspace::WorkspaceShell::TestAccess::SettleFileWrites(shell);
+  redraw.Merge(shell.ConsumePendingRenderInvalidation());
   return redraw;
 }
 

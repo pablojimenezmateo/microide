@@ -34,7 +34,7 @@ struct ActionContextTestServices {
   ActionContextTestServices(workspace::ProjectCatalogState& catalog,
                             workspace::ProjectWorkspaceState& state, float& ui_scale)
       : terminal_panel(state, {}),
-        editor_tabs(workspace::TabCoordinator(catalog, state, {})),
+        editor_tabs(workspace::TabCoordinator(catalog, state, file_writes, {})),
         text_input(state, prompts, menus, text_input_state,
                    {.compare_merge = compare_merge,
                     .quick_pick = quick_pick,
@@ -89,6 +89,7 @@ struct ActionContextTestServices {
   workspace::AssistService assist;
   workspace::DebugService debug;
   workspace::TerminalPanelService terminal_panel;
+  project::FileWriteService file_writes;
   workspace::EditorTabService editor_tabs;
   workspace::TextInputCoordinator text_input;
   workspace::QuickPickService quick_pick;

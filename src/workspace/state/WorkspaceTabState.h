@@ -7,6 +7,7 @@
 #include <string>
 #include <type_traits>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 #include "compare/BranchReviewStateTypes.h"
@@ -308,6 +309,7 @@ struct EditorTabState {
   bool center_cursor_on_load = false;
 
   editor::AsyncBufferWork pending_format_save;
+  [[nodiscard]] bool save_pending() const { return pending_format_save.armed() || viewport.save_in_flight(); }
   editor::AsyncBufferWork pending_load;
   std::unique_ptr<editor::FoldingModel> folding_model =
       std::make_unique<editor::FoldingModel>();
@@ -422,6 +424,10 @@ static_assert(std::is_default_constructible_v<TabEntry::DeferredTabHandle>);
     return &tab.compare->right_viewport;
   }
   return nullptr;
+}
+
+[[nodiscard]] inline editor::TextViewport* LoadedBufferViewOf(TabEntry& tab) {
+  return const_cast<editor::TextViewport*>(LoadedBufferViewOf(std::as_const(tab)));
 }
 
 struct TerminalLinkSpan {

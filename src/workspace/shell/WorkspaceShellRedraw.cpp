@@ -596,7 +596,8 @@ WorkspaceShell::IdleWaitState WorkspaceShell::CurrentIdleWaitState() {
 bool WorkspaceShell::ReloadProjectIfFilesChanged(bool force_check) {
   util::PerformanceTrace::Scope perf_scope("WorkspaceShell::ReloadProjectIfFilesChanged");
   save_formatter_service_.DrainCompletions();
-  file_read_service_.DrainCompletions();
+  file_io_.reads.DrainCompletions();
+  file_io_.writes.DrainCompletions();
   if (glue_->remote_host_service != nullptr) {
     glue_->remote_host_service->DrainCompletions();
   }

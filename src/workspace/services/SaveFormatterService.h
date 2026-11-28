@@ -8,7 +8,7 @@
 #include <vector>
 
 #include "platform/ProcessLauncher.h"
-#include "project/FileReadService.h"
+#include "project/FileIoServices.h"
 #include "plugin/PluginHost.h"
 #include "util/MainThreadMailbox.h"
 #include "util/TaskExecutor.h"
@@ -64,9 +64,10 @@ class SaveFormatterService {
   util::TaskExecutor executor_{1};
 };
 
-inline void SettleTabIoBeforeTeardown(SaveFormatterService& saves, project::FileReadService& reads) {
+inline void SettleTabIoBeforeTeardown(SaveFormatterService& saves, project::FileIoServices& io) {
   saves.FlushPendingRuns();
-  reads.CancelAllAndFlush();
+  io.reads.CancelAllAndFlush();
+  io.writes.Flush();
 }
 
 }

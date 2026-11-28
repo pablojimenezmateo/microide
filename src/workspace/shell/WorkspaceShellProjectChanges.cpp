@@ -242,7 +242,7 @@ void WorkspaceShell::BeginExternalChangeConfirm(const std::filesystem::path& nor
   util::AddPerformanceCounter(util::PerfCounterId::ExternalChangeConfirmPostedReads);
   auto digest = std::make_shared<std::optional<std::uint64_t>>();
   const util::FileSignature read_signature = util::StatFileSignature(normalized_path);
-  (void)file_read_service_.Begin({
+  (void)file_io_.reads.Begin({
       .path = normalized_path,
       .on_worker =
           [digest, normalized_path, read_signature](std::string& bytes) {

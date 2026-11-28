@@ -276,6 +276,8 @@ class ScenarioContext {
   void ApplyEditorPreferencesToAllTabs();
   editor::TextViewport& ActiveViewport();
   bool SaveActiveTab();
+  bool BeginSaveActiveTab();
+  void SettleFileWrites();
   void RegisterVirtualDocument(const workspace::VirtualDocumentSpec& spec);
   bool OpenVirtualDocument(std::string_view uri);
   bool ExpandSnippetAtCaret(std::string_view snippet_body);

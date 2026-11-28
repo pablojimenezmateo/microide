@@ -92,8 +92,7 @@ void DirtyPromptCoordinator::SettleOrphanedRun(std::uint64_t run_id) {
     const auto holds = [id](const ProjectWorkspaceState& state) {
       for (const EditorGroup& group : state.editor_groups) {
         for (const TabEntry& tab : group.open_tabs) {
-          if (tab.stable_id == id && tab.editor_state.has_value() &&
-              tab.editor_state->pending_format_save.armed()) {
+          if (tab.stable_id == id && tab.editor_state.has_value() && tab.editor_state->save_pending()) {
             return true;
           }
         }
@@ -233,7 +232,7 @@ std::optional<std::vector<std::uint64_t>> DirtyPromptCoordinator::DeferSaveDirty
     }
     TabEntry& tab =
         context_.current_project_state.editor_groups[ref.group_index].open_tabs[ref.tab_index];
-    if (tab.editor_state.has_value() && tab.editor_state->pending_format_save.armed()) {
+    if (tab.editor_state.has_value() && tab.editor_state->save_pending()) {
       deferred.push_back(EnsureTabStableId(tab));
     }
   }

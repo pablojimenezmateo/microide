@@ -1356,7 +1356,7 @@
   StatusBarModelService status_bar_model_service_;
   NotificationService notification_service_;
   SaveFormatterService save_formatter_service_;
-  project::FileReadService file_read_service_;
+  project::FileIoServices file_io_;
   SettingsOverlayService settings_overlay_service_;
   QuickPickService quick_pick_service_;
   TerminalFindService terminal_find_service_;

@@ -420,13 +420,18 @@
   static WorkspaceShell::PromptSurfaceState& CurrentPromptSurface(WorkspaceShell& shell) {
     return shell.context_.prompts.surface;
   }
-  static void ConfirmPromptSurface(WorkspaceShell& shell) { shell.ConfirmPromptSurface(); }
+  static void ConfirmPromptSurface(WorkspaceShell& shell) {
+    shell.ConfirmPromptSurface();
+    shell.file_io_.writes.Flush();
+  }
   static void ConfirmPromptSurfaceSavingDirtyBuffers(WorkspaceShell& shell) {
     shell.ConfirmPromptSurface(DirtyPathResolution::Save);
+    shell.file_io_.writes.Flush();
   }
   static void ConfirmPromptSurface(WorkspaceShell& shell, int selected_button) {
     shell.context_.prompts.surface.selected_button = selected_button;
     shell.ConfirmPromptSurface();
+    shell.file_io_.writes.Flush();
   }
   static bool OpenWorkingTreeComparisonUnsettled(WorkspaceShell& shell, const std::filesystem::path& path,
                                                  const std::string& left_ref, const std::string& left_label) {
@@ -540,8 +545,9 @@
         WorkspaceShell::ActionId::ProjectOpen, {}, WorkspaceShell::ActionSource::Menu);
   }
   static bool ExecuteActionFromMenu(WorkspaceShell& shell, WorkspaceShell::ActionId id) {
-    return ActionCoordinator(shell.MakeActionContext())
-        .Execute(id, {}, WorkspaceShell::ActionSource::Menu);
+    const bool handled = ActionCoordinator(shell.MakeActionContext()).Execute(id, {}, WorkspaceShell::ActionSource::Menu);
+    shell.file_io_.writes.Flush();
+    return handled;
   }
   static bool ExecuteProjectOpenFromCommand(WorkspaceShell& shell) {
     return ActionCoordinator(shell.MakeActionContext()).Execute(
@@ -663,7 +669,10 @@
   static void RequestCloseTab(WorkspaceShell& shell, std::size_t index) {
     shell.RequestCloseTab(index);
   }
-  static void CloseTab(WorkspaceShell& shell, std::size_t index) { shell.CloseTab(index); }
+  static void CloseTab(WorkspaceShell& shell, std::size_t index) {
+    shell.CloseTab(index);
+    shell.file_io_.writes.Flush();
+  }
   static void CloseProject(WorkspaceShell& shell, std::size_t index) { shell.CloseProject(index); }
   static void OpenFile(WorkspaceShell& shell, const std::filesystem::path& path) {
     shell.OpenFile(path);
@@ -835,7 +844,9 @@
     return shell.OpenVirtualDocumentInNewTab(uri);
   }
   static bool ExecuteCommandLine(WorkspaceShell& shell, const std::string& command_line) {
-    return shell.MakeCommandLineCoordinator().ExecuteCommandLine(command_line);
+    const bool handled = shell.MakeCommandLineCoordinator().ExecuteCommandLine(command_line);
+    shell.file_io_.writes.Flush();
+    return handled;
   }
   static void EnsurePluginWorkerStarted(WorkspaceShell& shell) {
     shell.plugin_runtime_.Host().SetWorker(&shell.plugin_runtime_.Thread());
@@ -882,6 +893,7 @@
   }
   static void FlushPendingSaveFormatters(WorkspaceShell& shell) {
     shell.save_formatter_service_.FlushPendingRuns();
+    shell.file_io_.writes.Flush();
   }
   static int PendingSaveFormatterCount(const WorkspaceShell& shell) {
     return shell.save_formatter_service_.PendingCount();

@@ -128,6 +128,14 @@ class TextViewport {
   [[nodiscard]] static WrittenSave WritePreparedSave(const PreparedSave& prepared, project::FileWriteGate& gate);
   [[nodiscard]] bool ApplyWrittenSave(const PreparedSave& prepared, WrittenSave written,
                                       std::error_code* error = nullptr);
+  bool HoldsDocument(const void* document) const { return document_.get() == document; }
+  void NoteSaveInFlight() { ++document_->saves_in_flight; }
+  void NoteSaveLanded() {
+    if (document_->saves_in_flight > 0) {
+      --document_->saves_in_flight;
+    }
+  }
+  bool save_in_flight() const { return document_ != nullptr && document_->saves_in_flight > 0; }
   bool IsDocumentOf(const PreparedSave& prepared) const {
     return document_.get() == prepared.document && document_->load_generation == prepared.load_generation;
   }
@@ -508,6 +516,7 @@ class TextViewport {
     bool dirty = false;
     std::uint64_t content_revision = NextDocumentRevisionBase();
     std::uint64_t load_generation = 0;
+    std::uint32_t saves_in_flight = 0;
     std::uint64_t head_content_revision = 0;
     std::uint64_t syntax_revision = 0;
     std::uint64_t layout_shape_revision = 0;

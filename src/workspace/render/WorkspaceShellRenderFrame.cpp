@@ -398,8 +398,11 @@ void WorkspaceShell::PrepareFrameState(FramePrepPass& pass) {
     ConsumePendingOpenFileDialogResult();
     ConsumePendingFontFileDialogResult();
     ConsumeProjectSearchUpdates();
-    if (file_read_service_.HasCompletions()) {
-      file_read_service_.DrainCompletions();
+    if (file_io_.reads.HasCompletions()) {
+      file_io_.reads.DrainCompletions();
+    }
+    if (file_io_.writes.HasCompletions()) {
+      file_io_.writes.DrainCompletions();
     }
   }
   MakeEditorTabService().ReconcileActiveCaretsWithDocuments();
