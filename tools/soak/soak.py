@@ -820,7 +820,23 @@ def job_weight(job: JobType, stats: dict[str, Any]) -> float:
     """
     hours = max(0.5, stats.get("weighted_hours", 0.0))
     yield_rate = stats.get("new_weighted", 0.0) / hours
-    return job.weight * (1 + min(4.0, 4 * yield_rate))
+    plateau = PLATEAU_SHARE if stats.get("quiet_runs", 0) >= PLATEAU_RUNS else 1.0
+    return job.weight * (1 + min(4.0, 4 * yield_rate)) * plateau
+
+
+PLATEAU_RUNS = 20
+PLATEAU_SHARE = 0.25
+
+
+def note_novelty(stats: dict[str, Any], summaries: list[dict[str, Any]], new_findings: int) -> None:
+    """Counts a job type's runs in a row that brought nothing new -- no state, no
+    transition, no finding (W1.6's plateau); a run that took no step counts for
+    nothing. From PLATEAU_RUNS on, job_weight gives the type PLATEAU_SHARE of its
+    weight, and the rotation's effort goes to the types still finding new ground."""
+    if sum(s.get("steps", 0) for s in summaries) == 0:
+        return
+    novel = new_findings > 0 or any(s.get("new_states", 0) or s.get("new_transitions", 0) for s in summaries)
+    stats["quiet_runs"] = 0 if novel else stats.get("quiet_runs", 0) + 1
 
 
 def job_profile(job_type: JobType, rng: random.Random) -> str:
@@ -1310,6 +1326,11 @@ def reap_job(job: Job, state: dict[str, Any], log, timed_out: bool = False) -> N
                 keep_sighting(job, finding, known[sig])
                 book.append(sig, "seen", **fields)
     stats["new_findings"] = stats.get("new_findings", 0) + new
+    was_flat = stats.get("quiet_runs", 0) >= PLATEAU_RUNS
+    note_novelty(stats, summaries, new)
+    if (stats.get("quiet_runs", 0) >= PLATEAU_RUNS) != was_flat:
+        log(f"  {job.type.name}: " + (f"plateau, {PLATEAU_RUNS} runs with nothing new; its weight is cut"
+                                       if not was_flat else "found new ground; its weight is back"))
     with open(RUN_LOG, "a") as out:
         out.write(json.dumps({"t": time.time(), "job": job.type.name, "cell": job.cell, "seed": job.seed,
                               "sha": job.sha, "seconds": round(elapsed), "exit": job.proc.returncode,
@@ -2990,6 +3011,9 @@ def cmd_health(args: argparse.Namespace) -> int:
         elif steps < job.steps * 0.5:
             verdict = f"short runs (asked {job.steps} steps)"
         problems += verdict not in ("ok", "did not run")
+        quiet = state.get("stats", {}).get(job.name, {}).get("quiet_runs", 0)
+        if verdict == "ok" and quiet >= PLATEAU_RUNS:
+            verdict = f"plateau: {quiet} runs with nothing new (weight cut)"
         print(f"  {job.name:14} {len(items):5} runs  {steps:6.0f} steps/run  {recorded:4} recorded  {verdict}")
     if stale_runner(state):
         print("runner: STALE -- tools/soak has changed since the runner started and it still runs the old code; "

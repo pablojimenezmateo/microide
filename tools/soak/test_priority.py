@@ -98,6 +98,26 @@ class IdleNoteTests(unittest.TestCase):
         self.assertIsNone(soak.idle_note(idle, "only 3 GB free on the disk", soak.IDLE_NOTE_SECONDS))
 
 
+class PlateauTests(unittest.TestCase):
+    def test_a_job_type_that_stopped_finding_anything_new_gives_way(self):
+        job = soak.JobType("a", 10, "default")
+        fresh = soak.job_weight(job, {"quiet_runs": soak.PLATEAU_RUNS - 1})
+        flat = soak.job_weight(job, {"quiet_runs": soak.PLATEAU_RUNS})
+        self.assertEqual(fresh, 10.0)
+        self.assertEqual(flat, 10.0 * soak.PLATEAU_SHARE)
+
+    def test_a_run_with_anything_new_ends_the_plateau(self):
+        stats = {"quiet_runs": 40}
+        soak.note_novelty(stats, [{"steps": 300, "new_states": 0, "new_transitions": 2}], 0)
+        self.assertEqual(stats["quiet_runs"], 0)
+        soak.note_novelty(stats, [{"steps": 300, "new_states": 0, "new_transitions": 0}], 0)
+        soak.note_novelty(stats, [], 0)
+        soak.note_novelty(stats, [{"steps": 0}], 0)
+        self.assertEqual(stats["quiet_runs"], 1, "a run that took no step says nothing")
+        soak.note_novelty(stats, [{"steps": 300, "new_states": 0}], 1)
+        self.assertEqual(stats["quiet_runs"], 0, "a new finding is new")
+
+
 class PriorityTests(unittest.TestCase):
     def test_severity_leads(self):
         stale = entry("a", "log", "log: QA-STALE frame=<n>", count=900, deterministic=True)

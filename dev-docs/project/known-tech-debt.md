@@ -363,7 +363,7 @@ What it left, by workstream:
    trusting it. Was: **Oracle not built:** input-to-frame latency with the redraw trace attached. (The
    idle-wake oracle and more always-a-finding log markers landed; `util::Log` has no
    levels, so "any error line" stays the marker list.)
-7. **Measurement (W1.6/W1.7): mostly built.** The coverage job is in the rotation
+7. **Measurement (W1.6/W1.7): DONE 2026-11-28.** The coverage job is in the rotation
    (the `coverage` build, clang source-based, merged per job into one profile;
    `soak.py coverage` writes lines, functions and branches by area at the
    current commit, and `soak.py health` lists the gaps); the monkey steers by
@@ -373,8 +373,12 @@ What it left, by workstream:
    was missing from it -- 1.2% of src/server, because its counters never reached
    the profile (sshd dropped LLVM_PROFILE_FILE, the daemon `_exit`ed without
    writing, the host's stop killed it first); fixed in 285bf3ba9 (a remote run:
-   2.7% -> 66%). Not built: plateau detection that moves job weights toward the
-   least-covered areas, and a per-commit branch-coverage delta.
+   2.7% -> 66%). 2026-11-28: a job type with 20 runs in a row that brought no new
+   state, transition or finding is on a plateau and keeps a quarter of its weight
+   (`note_novelty`, `job_weight`; `health` names it), so the rotation's effort goes
+   to the types still finding new ground -- measured first, no type was on one; and
+   each coverage report lists the branch conditions on the lines changed since the
+   report before it that the soak executed (`codecov.changed_since`).
 8. **W10 remainder: DONE 2026-11-26.** Mutation testing over the oracle code:
    `tools/run-checks.sh mutation` (`tools/qa/mutation-test.sh`, mutmut over
    `monkey_oracles.py` against `test_monkey_oracles.py`) fails on any mutant that
