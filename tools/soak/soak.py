@@ -2187,6 +2187,27 @@ def busy_reason(our_cores: float, others: float | None = None) -> str | None:
     return None
 
 
+IDLE_NOTE_SECONDS = 15 * 60
+
+
+def idle_note(idle: dict[str, Any], reason: str | None, now: float) -> str | None:
+    """The log line for a reason to start nothing that has held IDLE_NOTE_SECONDS
+    (once), and for its end, with how long it held. Its numbers aside, a reason is
+    one wait. The main soak stood idle 40 hours under the disk floor (2026-11-27)
+    and its log said nothing: the reason lived only in `status`."""
+    kind = re.sub(r"\d+(\.\d+)?", "<n>", reason) if reason is not None else None
+    if kind == idle.get("kind"):
+        if kind is not None and not idle.get("noted") and now - idle["since"] >= IDLE_NOTE_SECONDS:
+            idle["noted"] = True
+            return f"starting nothing for {(now - idle['since']) / 60:.0f} min: {reason}"
+        return None
+    noted, since = idle.get("noted"), idle.get("since", now)
+    idle.clear()
+    if kind is not None:
+        idle.update(kind=kind, since=now, noted=False)
+    return f"starting jobs again after {(now - since) / 3600:.1f} h" if noted else None
+
+
 # A job's cost before one is measured (JobLoad): the app, Xvfb and the driver.
 # Measured, a job costs about twice this (an ASan app alone takes a core and a
 # half), and the estimate -- the whole accounting until 2026-11-12 -- booked the
@@ -2751,6 +2772,7 @@ def cmd_run(args: argparse.Namespace) -> int:
     log(f"recording: {'OFF -- ' + unusable if unusable else f'{RECORD_FRACTION:.0%} of the default-build jobs run under rr'}")
     last_cap = -1
     last_start = 0.0
+    idle: dict[str, Any] = {}
     last_containment = 0.0
     last_hunt = 0.0
     while not stopping:
@@ -2841,6 +2863,8 @@ def cmd_run(args: argparse.Namespace) -> int:
                 state["current"] = [j.cell for j in jobs]
                 save_state(state)
         reason = busy_reason(our_cores() or CORES_PER_JOB * slots(jobs), job_load.others(os.getloadavg()[0]))
+        if (note := idle_note(idle, reason, now)) is not None:
+            log(note)
         if reason is None:
             # One per RAMP_SECONDS: the load average needs time to show what the
             # last one costs before the budget is trusted for the next.

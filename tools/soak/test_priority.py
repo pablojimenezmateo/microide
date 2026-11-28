@@ -74,6 +74,30 @@ class NextCheckTests(unittest.TestCase):
         self.assertEqual(soak.next_check(["sev-twin"], self.known, 0), "sev-twin")
 
 
+class IdleNoteTests(unittest.TestCase):
+    def test_a_lasting_stall_is_logged_once_and_its_end_with_how_long(self):
+        idle: dict = {}
+        disk = "only 29 GB free on the disk (MICROIDE_SOAK_MIN_FREE_GB)"
+        self.assertIsNone(soak.idle_note(idle, disk, 1000.0))
+        self.assertIsNone(soak.idle_note(idle, disk.replace("29", "28"), 1000.0 + soak.IDLE_NOTE_SECONDS - 1))
+        note = soak.idle_note(idle, disk, 1000.0 + soak.IDLE_NOTE_SECONDS)
+        self.assertIn("starting nothing", note)
+        self.assertIn("GB free on the disk", note)
+        self.assertIsNone(soak.idle_note(idle, disk, 5000.0), "once")
+        self.assertIn("2.8 h", soak.idle_note(idle, None, 1000.0 + 2.8 * 3600))
+        self.assertEqual(idle, {})
+
+    def test_a_short_wait_says_nothing(self):
+        idle: dict = {}
+        self.assertIsNone(soak.idle_note(idle, "the machine is busy (9.0 cores not the soak's; load 12.0)", 0.0))
+        self.assertIsNone(soak.idle_note(idle, None, 60.0))
+
+    def test_another_reason_starts_its_own_clock(self):
+        idle: dict = {}
+        soak.idle_note(idle, "paused (build/soak/PAUSE)", 0.0)
+        self.assertIsNone(soak.idle_note(idle, "only 3 GB free on the disk", soak.IDLE_NOTE_SECONDS))
+
+
 class PriorityTests(unittest.TestCase):
     def test_severity_leads(self):
         stale = entry("a", "log", "log: QA-STALE frame=<n>", count=900, deterministic=True)
