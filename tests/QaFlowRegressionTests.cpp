@@ -5059,6 +5059,7 @@ void TestAutosaveOnFocusChangeCoversEveryWayTheEditorLosesFocus() {
   const auto frame = [&] {
     fixture.shell.Render(fixture.canvas.renderer(), FlowFixture::kWidth, FlowFixture::kHeight);
     (void)fixture.shell.ConsumePendingRenderInvalidation();
+    TestAccess::SettleFileWrites(fixture.shell);
   };
   frame();
   (void)DispatchEvents(fixture.shell, {TextInputEvent("A")});

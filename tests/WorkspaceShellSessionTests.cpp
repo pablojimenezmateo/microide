@@ -573,6 +573,7 @@ void TestWorkspaceShellARestoredUnsavedBufferIsNotAutosaved() {
   const auto frame = [&]() {
     shell.Render(canvas.renderer(), 1280, 720);
     (void)shell.ConsumePendingRenderInvalidation();
+    WorkspaceShellTestAccess::SettleFileWrites(shell);
   };
   frame();
   WorkspaceShellTestAccess::OpenFile(shell, root / "empty.txt");

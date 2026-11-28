@@ -281,10 +281,15 @@ def flow_tree_cancel_transactions(app: q.App) -> None:
 
 
 def _maybe_read(app: q.App, relative: str) -> str | None:
-    """`relative`'s text, or None while it does not exist."""
+    """`relative`'s text, or None while it does not exist -- or cannot be read
+    yet: std::filesystem::copy_file makes the copy write-only and gives it the
+    source's mode once its bytes are in, so a copy in progress is unreadable."""
     assert app.project is not None
     path = app.project / relative
-    return path.read_text() if path.is_file() else None
+    try:
+        return path.read_text() if path.is_file() else None
+    except PermissionError:
+        return None
 
 
 def flow_tree_clipboard(app: q.App) -> None:
