@@ -637,7 +637,8 @@ def tier_of(kind: str, label: str) -> int:
 
 # ---- families ------------------------------------------------------------------------
 
-_FAMILY_FILE = re.compile(r"\b(buffer of|buffer|text of) (\S.*?) (did not come back|came back|differs|\(<n> ->)")
+_FAMILY_FILE = re.compile(r"\b(buffer of|buffer|text of|composition changed) (\S.*?) "
+                          r"(did not come back|came back|differs|\(<n> ->|before it was committed)")
 _FAMILY_STALE = re.compile(r"^log: (\[[^\]]*\] )?QA-STALE .*?(reason=\S+)")
 
 
@@ -650,7 +651,7 @@ def family(kind: str, label: str) -> str:
     reason) and where its first pixel sat against the clips vary from walk to
     walk for one defect (the acceptance run's planted stale status segment was
     seven signatures). For reading the ledger, not for deduplication."""
-    if kind in ("data", "undo"):
+    if kind in ("data", "undo", "state"):
         return _FAMILY_FILE.sub(lambda m: f"{m.group(1)} <file> {m.group(3)}", label)
     if kind == "leak":
         return label.split(" over the run", 1)[0]
@@ -675,6 +676,27 @@ def priority_key(entry: ld.Entry) -> tuple:
     unchecked before flaky, then the most sightings."""
     det = 0 if entry.deterministic else (2 if entry.deterministic is False else 1)
     return (is_quiet(entry), impact_tier(entry), tiny_only(entry), det, -entry.count, entry.sig)
+
+
+CHECK_LOW_TIER_EVERY = 3
+
+
+def next_check(pending: list[str], known: dict[str, ld.Entry], started: int) -> str:
+    """The pending finding to check next. A family nobody has measured goes
+    before another signature of one already measured (a check is an hour and a
+    half of three displays; the acceptance run spent them on twins). Among those,
+    the most severe first, except that every CHECK_LOW_TIER_EVERY-th check goes
+    to a layout or paint finding: by severity alone the acceptance run's planted
+    stale segment waited all 24 h behind severe findings and was never minimized."""
+    entries = {sig: known.get(sig, ld.Entry(sig=sig)) for sig in pending}
+    measured = {family(e.kind, e.label) for sig, e in known.items()
+                if e.deterministic is not None and sig not in entries}
+    fresh = [sig for sig, e in entries.items() if family(e.kind, e.label) not in measured]
+    pool = fresh or list(pending)
+    if started % CHECK_LOW_TIER_EVERY == CHECK_LOW_TIER_EVERY - 1:
+        low = [sig for sig in pool if impact_tier(entries[sig]) >= 2]
+        pool = low or pool
+    return min(pool, key=lambda sig: priority_key(entries[sig]))
 
 
 # ---- exposure: what the soak's silence says ------------------------------------------
@@ -2791,10 +2813,8 @@ def cmd_run(args: argparse.Namespace) -> int:
             # Checks first, up to their share (replay_room): a new finding's rate
             # and minimal replay are worth more than another fresh run. A check
             # holds three displays, so it counts as three jobs.
-            # The most severe first: a paint finding from a tiny window waits
-            # behind everything a user could lose work to.
-            known = ledger().entries()
-            sig = min(pending, key=lambda p: priority_key(known.get(p, ld.Entry(sig=p))))
+            sig = next_check(pending, ledger().entries(), int(state.get("checks_started", 0)))
+            state["checks_started"] = int(state.get("checks_started", 0)) + 1
             pending.remove(sig)
             jobs.append(start_check(sig, state))
             log(f"check {sig}")

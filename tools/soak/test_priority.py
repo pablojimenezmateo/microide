@@ -47,6 +47,33 @@ class FamilyTests(unittest.TestCase):
         self.assertEqual({e.sig for e in paint[0][1]}, {"s1", "s2", "s3"})
 
 
+class NextCheckTests(unittest.TestCase):
+    def setUp(self):
+        stale = "log: [statusBar|outside|area|status:line-column] QA-STALE frame=<n> reason=prepared"
+        self.known = {
+            "sev": entry("sev", "crash", "crash: SIGSEGV in A", count=50),
+            "sev-done": entry("sev-done", "crash", "crash: SIGSEGV in B", deterministic=True),
+            "sev-twin": entry("sev-twin", "crash", "crash: SIGSEGV in B", count=90),
+            "paint": entry("paint", "log", stale, count=900),
+            "paint-twin": entry("paint-twin", "log", stale.replace("outside", "clip-edge"), count=5),
+        }
+
+    def test_a_family_nobody_measured_goes_before_another_signature_of_a_measured_one(self):
+        pending = ["sev-twin", "sev"]
+        self.assertEqual(soak.next_check(pending, self.known, 0), "sev")
+
+    def test_the_most_severe_unmeasured_family_leads(self):
+        pending = ["paint", "sev"]
+        self.assertEqual([soak.next_check(pending, self.known, n) for n in (0, 1)], ["sev", "sev"])
+
+    def test_every_third_check_is_a_lower_tier_one_so_paint_never_starves(self):
+        pending = ["paint", "paint-twin", "sev"]
+        self.assertEqual(soak.next_check(pending, self.known, soak.CHECK_LOW_TIER_EVERY - 1), "paint")
+
+    def test_with_only_measured_families_left_the_order_is_by_priority(self):
+        self.assertEqual(soak.next_check(["sev-twin"], self.known, 0), "sev-twin")
+
+
 class PriorityTests(unittest.TestCase):
     def test_severity_leads(self):
         stale = entry("a", "log", "log: QA-STALE frame=<n>", count=900, deterministic=True)

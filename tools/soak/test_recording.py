@@ -217,6 +217,11 @@ class RecordingTests(unittest.TestCase):
                             self.soak.family("data", "data: the clean buffer of rtl.txt differs from its file"))
         self.assertEqual(self.soak.family("overlap", "overlap: a overlaps b"), "overlap: a overlaps b")
 
+    def test_an_ime_composition_that_changed_a_file_is_one_family_whatever_the_file(self):
+        labels = [f"state: an IME composition changed {name} before it was committed"
+                  for name in ("rtl.txt", "名前 with spaces.txt", "code.py")]
+        self.assertEqual(len({self.soak.family("state", label) for label in labels}), 1)
+
     def test_one_stale_element_is_one_family_however_the_frame_caught_it(self):
         labels = ["log: [statusBar|outside|area|status:line-column] QA-STALE frame=<n> reason=prepared pixels=<n>",
                   "log: [statusBar|clip-edge|area|status:line-column] QA-STALE frame=<n> reason=prepared pixels=<n>",
