@@ -16,6 +16,21 @@ moved, verbatim, to `guidelines/tech-debt/archive/2026-11-08-resolved-debt-ledge
 
 ## Open items
 
+### TD-2026-11-28-458 — a save writes the whole buffer on the main thread. [OPEN]
+
+`TextViewport::Save` serializes the document and writes it (`FileWriteGate::WriteText`)
+on the main thread, so the frame that saves waits for both: for the soak's 50 MB
+`qa-big/huge1.txt`, 3.4 s on ASan (not measured on the default build; a replay of
+that run with a 100 ms budget flagged no frame), where
+qa-deep's monkey met it as a latency finding (runs 46163735387, 46164693799; the
+stall watchdog's stack ended at the save). The QA trace's own share -- it
+serialized and hashed the buffer twice more -- was removed 2026-11-28; what is
+left is the app's. Moving the write off the main thread needs the save's
+contract kept: the dirty flag, `MarkSaved`, the disk signature the conflict check
+compares, the crash-safety flush and a second save of the same buffer while the
+first is in flight all order against the write. Not started; decide whether a
+large-buffer save should be asynchronous, or the budget should exempt it.
+
 ### TD-2026-11-16-452 — what the soak still cannot say about a finding, or reach. [OPEN]
 
 Left by the 2026-11-16 assessment of the soak (`tools/soak`) and the deep review
