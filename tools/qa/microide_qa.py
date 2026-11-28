@@ -559,6 +559,11 @@ class MainThreadProfiler:
     perf, and never a failure of the request it watches."""
 
     REPORT_BYTES = 48 * 1024
+    # One thread's samples need little buffer, and perf's default (per CPU,
+    # charged to the user's perf_event_mlock_kb, 516 KB here) let two or three
+    # sessions -- the soak's jobs profile at once -- take it all, and the next
+    # `perf record` failed with nothing to report.
+    MMAP_PAGES = 16
 
     def __init__(self, process: subprocess.Popen[bytes], data: Path, binary: Path) -> None:
         self.process, self.data, self.binary = process, data, binary
@@ -572,7 +577,7 @@ class MainThreadProfiler:
         data = Path(work) / "latency.perf.data"
         try:
             process = subprocess.Popen(
-                [perf, "record", "--quiet", "-F", "497", "--call-graph", "dwarf,16384",
+                [perf, "record", "--quiet", "-F", "497", "--call-graph", "dwarf,16384", "-m", str(cls.MMAP_PAGES),
                  "-t", str(app.pid), "-o", str(data)],
                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         except OSError:
