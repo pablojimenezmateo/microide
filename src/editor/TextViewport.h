@@ -443,6 +443,7 @@ class TextViewport {
 
   void TraceBufferIo(std::string_view event) const;
   void TraceBufferIo(std::string_view event, std::string_view bytes) const;
+  void TraceBufferIo(std::string_view event, std::size_t size, std::string_view sha) const;
 
  private:
   using SecondaryCaret = TextViewportUndoHistory::SecondaryCaret;

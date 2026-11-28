@@ -203,6 +203,15 @@ bool BufferIoTraceEnabled() {
   return enabled;
 }
 
+std::string BufferIoDigest(std::string_view bytes) {
+  if (!BufferIoTraceEnabled()) {
+    return {};
+  }
+  util::Sha256 sha;
+  sha.Update(bytes);
+  return sha.FinishHex().substr(0, 12);
+}
+
 }
 
 void TextViewport::TraceBufferIo(std::string_view event) const {
@@ -216,14 +225,19 @@ void TextViewport::TraceBufferIo(std::string_view event, std::string_view bytes)
   if (!BufferIoTraceEnabled() || document_ == nullptr) {
     return;
   }
-  util::Sha256 sha;
-  sha.Update(bytes);
+  TraceBufferIo(event, bytes.size(), BufferIoDigest(bytes));
+}
+
+void TextViewport::TraceBufferIo(std::string_view event, std::size_t size, std::string_view sha) const {
+  if (!BufferIoTraceEnabled() || document_ == nullptr) {
+    return;
+  }
   const util::FileSignature& disk = document_->disk_signature;
   util::Log(std::format(
       "microide buffer-io: {} path={} doc={} rev={} dirty={} bytes={} sha={} "
       "disk_exists={} disk_size={} disk_mtime={} disk_racy={}",
       event, document_->path.string(), static_cast<const void*>(document_.get()),
-      content_revision(), document_->dirty ? 1 : 0, bytes.size(), sha.FinishHex().substr(0, 12),
+      content_revision(), document_->dirty ? 1 : 0, size, sha,
       disk.exists ? 1 : 0, disk.size, disk.mtime_ticks, disk.racy ? 1 : 0));
 }
 
@@ -261,7 +275,8 @@ bool TextViewport::Save(project::FileWriteGate& gate, std::error_code* error, Sa
   }
   const util::WriteTarget target =
       document_->disk_signature.exists ? util::WriteTarget::Replace : util::WriteTarget::CreateNew;
-  TraceBufferIo("writing", text);
+  const std::string digest = BufferIoDigest(text);
+  TraceBufferIo("writing", text.size(), digest);
   const project::FileWriteGate::Result written = gate.WriteText(
       document_->path, text, project::FileWriteGate::Signature::Capture, target);
   if (!written.ok) {
@@ -286,7 +301,7 @@ bool TextViewport::Save(project::FileWriteGate& gate, std::error_code* error, Sa
   document_->dirty = false;
   document_->undo_history.MarkSaved();
   document_->disk_signature = written.signature;
-  TraceBufferIo("write");
+  TraceBufferIo("write", text.size(), digest);
   return true;
 }
 
