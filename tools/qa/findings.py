@@ -19,6 +19,11 @@ _MASKS = (
     (re.compile(r"/tmp/[^\s'\"]+|/home/[^\s'\"]+|build/[^\s'\"]+"), "<path>"),
     (re.compile(r"'[^']{0,200}'|\"[^\"]{0,200}\""), "<q>"),
     (re.compile(r"\[[-\d., ]+\]"), "<rect>"),
+    # A stale frame's clip list: how many rects the frame repainted is not the
+    # defect (TD-2026-11-16-452 item 9: 295 of 703 paint signatures differed in
+    # nothing else); where the stale pixel sits against them is, and the
+    # signature's context says it (stale_clip_relation).
+    (re.compile(r"\bclips=\S+"), "clips=<clips>"),
     # A word of its own: "640x480" is a size, whose "0x480" read as hex split
     # one bounds defect into "<n>x<n> window" and "<n><hex> window".
     (re.compile(r"\b0x[0-9a-fA-F]+"), "<hex>"),

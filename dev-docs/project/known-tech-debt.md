@@ -124,7 +124,10 @@ splits "no replay reproduces" by it). Open, in the order they would pay:
    the soak itself -- and fixed what that showed: replays that changed a
    finding's signature or misread their own path, checks that could not run,
    an inventory that could not either):
-   - **Item 1, for stale paint, was measured and not done.** 703 open paint
+   - **Item 1, for stale paint: DONE 2026-11-28.** The clip list is masked whole
+     (`findings._MASKS`), so the number of clips no longer splits a signature;
+     the re-keyed findings are checked after every family nobody has measured
+     (`next_check`), so the cost below is paid at the back of the queue. Was: 703 open paint
      signatures are 408 distinct (surface, clip relation, shape, element,
      reason) contexts; the clip COUNT alone is the other 295, and one plugins
      run booked three signatures that differ in nothing else. Masking it

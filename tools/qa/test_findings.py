@@ -56,6 +56,12 @@ class StaleSignatureTests(unittest.TestCase):
                          "in-clip")
         self.assertEqual(fnd.stale_clip_relation("data: not a stale frame"), "")
 
+    def test_the_number_of_clips_does_not_split_a_defect(self):
+        one = stale("434,81,206,96", "483,81", "0,0,214,26")
+        three = stale("434,81,206,96", "483,81", "0,0,214,26;300,0,10,10;600,40,8,8")
+        self.assertEqual(fnd.signature("log", one), fnd.signature("log", three))
+        self.assertEqual(fnd.normalize(three, "log").count("clips="), 1)
+
     def test_one_signature_per_defect_shape(self):
         edge = stale("703,152,1,9", "703,152", "325,85,378,160")
         missing = stale("434,81,206,96", "483,81", "0,0,214,26")
