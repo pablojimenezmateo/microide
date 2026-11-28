@@ -2651,7 +2651,8 @@ class App:
 
         - focus: keyboard focus on a surface that is not there (the overlay with no
           overlay, modal or menu up; a hidden sidebar or panel) -- every key then
-          goes nowhere, which is what Escape from the palette did to the tree;
+          goes nowhere, which is what Escape from the palette did to the tree --
+          or typed text going to another surface than the keys (_text_input_findings);
         - bounds: an element outside the window (a card centred on a narrow
           editor area ran off it);
         - surface: a sidebar, debug-pane or panel control outside its surface
@@ -2680,6 +2681,7 @@ class App:
             out.append(("focus", "keyboard focus is on the sidebar, which is hidden"))
         if focus == "panel" and not (ui.get("panel") or {}).get("visible", True):
             out.append(("focus", "keyboard focus is on the panel, which is hidden"))
+        out += _text_input_findings(ui)
         window = ui.get("window") or {}
         width, height = window.get("width", 0), window.get("height", 0)
         # Below the layout floor (util::kMinimumLayoutWidth x Height, in layout
@@ -3202,6 +3204,36 @@ def _floats_over(a: str, b: str) -> bool:
     """Whether one of the two is a floating card over editor content the other is."""
     return any(x.startswith(_FLOATS_OVER_CONTENT) and y.startswith(_EDITOR_CONTENT_PREFIXES)
                for x, y in ((a, b), (b, a)))
+
+
+# The focus each text input surface belongs to: typing goes to `textInput`, the
+# keys (Enter, Backspace, the arrows) to `focus`. Kept apart from the app's own
+# routing on purpose, so a slip in it shows here.
+TEXT_INPUT_FOCUS = {
+    "editor": "editor",
+    "file-finder": "overlay", "buffer-search": "overlay", "buffer-replace-search": "overlay",
+    "buffer-replace-replace": "overlay", "commit-picker": "overlay", "quick-pick": "overlay",
+    "command-palette": "overlay",
+    "sidebar-search-query": "sidebar", "sidebar-search-replace": "sidebar", "sidebar-search-include": "sidebar",
+    "sidebar-search-exclude": "sidebar", "commit-subject": "sidebar", "commit-body": "sidebar",
+    "terminal": "panel", "terminal-find": "panel",
+    "debug-variable-edit": "debug-pane",
+}
+
+
+def _text_input_findings(ui: dict[str, Any]) -> list[tuple[str, str]]:
+    """Typed text going to another surface than the keys (TD-2026-11-08-435 item
+    2: the caret's owner agrees with the input's). Not judged while a modal owns
+    the keys, while nothing takes text, or for a surface this table does not know;
+    a completion list holds the arrows while the letters go on into the buffer."""
+    surface, focus = ui.get("textInput"), ui.get("focus")
+    owner = TEXT_INPUT_FOCUS.get(surface or "")
+    if ui.get("modal") or owner is None or focus is None or owner == focus:
+        return []
+    overlay = ui.get("overlay") or {}
+    if surface == "editor" and focus == "overlay" and overlay.get("visible") and overlay.get("mode") == "completion":
+        return []
+    return [("focus", f"typed text goes to {surface} while the keyboard focus is on {focus}")]
 
 
 def _surface_and_overlap_findings(ui: dict[str, Any]) -> list[tuple[str, str]]:

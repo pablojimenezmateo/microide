@@ -73,6 +73,33 @@ std::string_view ControlUiFocusName(FocusTarget focus) {
   return "editor";
 }
 
+std::string_view ControlUiTextInputName(TextInputSurface surface) {
+  switch (surface) {
+    case TextInputSurface::None: return "none";
+    case TextInputSurface::Editor: return "editor";
+    case TextInputSurface::PromptInput: return "prompt-input";
+    case TextInputSurface::FileFinder: return "file-finder";
+    case TextInputSurface::BufferSearch: return "buffer-search";
+    case TextInputSurface::BufferReplaceSearch: return "buffer-replace-search";
+    case TextInputSurface::BufferReplaceReplace: return "buffer-replace-replace";
+    case TextInputSurface::CommitPicker: return "commit-picker";
+    case TextInputSurface::QuickPick: return "quick-pick";
+    case TextInputSurface::CommandPalette: return "command-palette";
+    case TextInputSurface::SidebarSearchQuery: return "sidebar-search-query";
+    case TextInputSurface::SidebarSearchReplace: return "sidebar-search-replace";
+    case TextInputSurface::SidebarSearchInclude: return "sidebar-search-include";
+    case TextInputSurface::SidebarSearchExclude: return "sidebar-search-exclude";
+    case TextInputSurface::CommitSubject: return "commit-subject";
+    case TextInputSurface::CommitBody: return "commit-body";
+    case TextInputSurface::Terminal: return "terminal";
+    case TextInputSurface::TerminalFind: return "terminal-find";
+    case TextInputSurface::SettingsQuery: return "settings-query";
+    case TextInputSurface::SettingsValueEdit: return "settings-value-edit";
+    case TextInputSurface::DebugVariableEdit: return "debug-variable-edit";
+  }
+  return "none";
+}
+
 std::string_view ControlUiOverlayModeName(OverlayMode mode) {
   switch (mode) {
     case OverlayMode::FileFinder: return "file-finder";
@@ -118,6 +145,8 @@ util::JsonValue ControlUiQuery::Build(const WorkspaceContext& context, const Ope
   window["focused"] = util::JsonValue(context.interaction_state.window_has_input_focus);
   object["window"] = util::JsonValue(std::move(window));
   object["focus"] = util::JsonValue(std::string(ControlUiFocusName(state.surface.focus)));
+  object["textInput"] = util::JsonValue(std::string(ControlUiTextInputName(
+      operations.text_input ? operations.text_input() : context.text_input.active_surface)));
 
   util::JsonObject sidebar;
   sidebar["visible"] = util::JsonValue(HasArea(layout->sidebar));

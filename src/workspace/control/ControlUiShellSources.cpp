@@ -183,6 +183,7 @@ ControlUiQuery::Operations WorkspaceShell::MakeControlUiOperations() {
         }
         return {};
       },
+      .text_input = [this]() { return CurrentTextInputSurface(); },
       .menus = [this](const WorkspaceLayout& layout, ControlUiElements& out) { ControlUiMenus(layout, out); },
       .tabs = [this](const WorkspaceLayout& layout, ControlUiElements& out) { ControlUiTabs(layout, out); },
       .sidebar = [this](const WorkspaceLayout& layout, ControlUiElements& out) { ControlUiSidebar(layout, out); },

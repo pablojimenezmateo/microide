@@ -962,9 +962,10 @@ inline bool ModalOverlayLostFocus(const ProjectWorkspaceState& state) {
   switch (state.overlay.mode) {
     case OverlayMode::BufferSearch:
     case OverlayMode::BufferReplace:
+      return false;
     case OverlayMode::Completion:
     case OverlayMode::CodeActions:
-      return false;
+      return state.surface.focus != FocusTarget::Editor;
     default:
       return true;
   }

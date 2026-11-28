@@ -12,6 +12,7 @@
 #include "workspace/WorkspaceLayout.h"
 #include "workspace/registries/WorkspaceMenuRegistry.h"
 #include "workspace/state/WorkspaceProjectState.h"
+#include "workspace/state/WorkspaceTextInputState.h"
 
 namespace microide::workspace {
 
@@ -77,6 +78,7 @@ class ControlUiQuery {
     std::function<std::string(MenuId)> menu_label;
     std::function<std::string(MenuId, std::size_t)> menu_row_locator;
     std::function<std::string()> modal;
+    std::function<TextInputSurface()> text_input;
     ElementSource menus;
     ElementSource tabs;
     ElementSource sidebar;
@@ -95,6 +97,7 @@ class ControlUiQuery {
 };
 
 std::string_view ControlUiFocusName(FocusTarget focus);
+std::string_view ControlUiTextInputName(TextInputSurface surface);
 std::string_view ControlUiOverlayModeName(OverlayMode mode);
 std::string_view ControlUiPanelContentName(PanelContentKind content);
 

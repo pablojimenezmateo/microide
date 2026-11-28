@@ -342,6 +342,18 @@ void TestBufferQueryReportsTextCaretsAndFolds() {
          "fold-all should leave the query reporting the fold at line 1");
 }
 
+void TestUiQueryNamesWhereTypedTextGoes() {
+  UiFixture fixture;
+  Expect(TestAccess::ExecuteControlCommand(fixture.shell, "open alpha.cpp").ok, "a file opens");
+  Expect(TestAccess::ExecuteControlCommand(fixture.shell, "focus editor").ok, "the editor takes the keys");
+  util::JsonValue ui = TestAccess::ControlQuery(fixture.shell, "ui");
+  Expect(ui["textInput"].AsString() == "editor", "typed text goes to the editor: " + ui["textInput"].AsString());
+  Expect(TestAccess::ExecuteControlCommand(fixture.shell, "command-palette list").ok, "the palette opens");
+  ui = TestAccess::ControlQuery(fixture.shell, "ui");
+  Expect(ui["textInput"].AsString() == "command-palette" && ui["focus"].AsString() == "overlay",
+         "and then to the palette: " + ui["textInput"].AsString());
+}
+
 void TestOpeningAFileUnderTheCommandPaletteDismissesIt() {
   UiFixture fixture;
   WriteFile(fixture.root / "other.cpp", "int other;\n");
@@ -1063,6 +1075,7 @@ void RegisterControlUiQueryTests(std::vector<TestCase>& tests) {
   AddTest(tests, "ControlUiQuery/NamesAreMadeUnique", TestUiNamesAreMadeUnique);
   AddTest(tests, "ControlUiQuery/BufferReportsTextCaretsAndFolds",
           TestBufferQueryReportsTextCaretsAndFolds);
+  AddTest(tests, "ControlUiQuery/NamesWhereTypedTextGoes", TestUiQueryNamesWhereTypedTextGoes);
   AddTest(tests, "ControlUiQuery/OpeningAFileUnderTheCommandPaletteDismissesIt",
           TestOpeningAFileUnderTheCommandPaletteDismissesIt);
   AddTest(tests, "ControlUiQuery/StatusCountsOutstandingLspRequests",

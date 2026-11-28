@@ -1136,7 +1136,28 @@ return ide.plugin({
   Expect(editor.cursor_line() == 0 && editor.cursor_column() == 4, "the caret ends the word");
 }
 
+void TestACompletionListDoesNotOutliveTheEditorsFocus() {
+  using microide::workspace::FocusTarget;
+  using microide::workspace::OverlayMode;
+  for (const OverlayMode mode : {OverlayMode::Completion, OverlayMode::CodeActions}) {
+    microide::workspace::ProjectWorkspaceState state;
+    state.overlay.visible = true;
+    state.overlay.mode = mode;
+    for (const FocusTarget kept : {FocusTarget::Overlay, FocusTarget::Editor}) {
+      state.surface.focus = kept;
+      Expect(!microide::workspace::ModalOverlayLostFocus(state),
+             "a list over the editor stays while the editor or the list has the keys");
+    }
+    for (const FocusTarget elsewhere : {FocusTarget::Sidebar, FocusTarget::Panel, FocusTarget::DebugPane}) {
+      state.surface.focus = elsewhere;
+      Expect(microide::workspace::ModalOverlayLostFocus(state),
+             "and goes when they move off it: typed text would land in the buffer behind the sidebar");
+    }
+  }
+}
+
 void RegisterPhase5Tests(std::vector<TestCase>& tests) {
+  AddTest(tests, "Phase5.ACompletionListDoesNotOutliveTheEditorsFocus", TestACompletionListDoesNotOutliveTheEditorsFocus);
   AddTest(tests, "Completion/WordStartsAtALongIdentifierOnAnEditedLine",
           TestCompletionWordStartsAtALongIdentifierOnAnEditedLine);
   AddTest(tests, "Completion/AcceptingTheWordAlreadyTypedClosesTheList",

@@ -265,13 +265,21 @@ What it left, by workstream:
    the prompt, the focus and the active tab stay. Item 1 is DONE as runtime
    sweeps (the static rules stay unbuilt, as this item found they cannot tie
    names to behaviour).
-2. **W2 frame-prep invariants.** The default build has no `NDEBUG` (CMake build type
-   empty), so the `qa` lane and the soak's default job are already the assert-armed
-   QA the plan asks for; `guidelines/testing.md` now says so. Not added: asserts that
-   every surface view model is built after the frame's last state mutation, that the
-   painted tooltip/hover/caret owner agrees with the input owner, and that no prep
-   step requests damage outside the window. Each needs its negative control (a past
-   bug reverted) before it can be trusted not to abort a healthy run.
+2. **W2 frame-prep invariants: DONE 2026-11-28, decided with the user.** The default
+   build has no `NDEBUG`, so the `qa` lane and the soak's default job are the
+   assert-armed QA the plan asks for. Of the three checks it named: the painted
+   caret's owner against the input's is an oracle, not an abort -- `ui` reports
+   `textInput` (where typed text goes) beside `focus` (where the keys go), and
+   `microide_qa._text_input_findings` holds them to one surface. It found a defect
+   on its first monkey runs: a completion list stayed up when a click moved the
+   focus to the sidebar, and typed letters went into the buffer behind it
+   (`ModalOverlayLostFocus` now dismisses a list over the editor once neither has
+   the keys). Hover painting goes through one `PointerOver` that honours the
+   occluder, so it has no second owner to disagree with. View models built before
+   the frame's last mutation: the state oracles read the chrome against the buffer
+   a frame later and report what stays stale. Damage outside the window: measured
+   on the CI evidence, 0 of 267 distinct damage rects lay outside it (3 started at
+   x=-6, a partly off-screen tab), so a check would have nothing to find.
 3. **W5 remainder.** The local fault matrix covers SIGKILL at every crash point of
    `WriteTextFileAtomically`, and since 2026-11-25 errno injection at its write,
    fsync and rename (TD-452 item 3: ENOSPC, EIO, EROFS, EXDEV, ...; a 5 s fsync
