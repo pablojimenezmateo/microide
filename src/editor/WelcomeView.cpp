@@ -1,6 +1,7 @@
 #include "editor/WelcomeView.h"
 
 #include <algorithm>
+#include <cmath>
 
 namespace microide::editor {
 
@@ -12,24 +13,34 @@ WelcomeLayout ComputeWelcomeLayout(const SDL_FRect& rect, const WelcomeViewModel
   const float row_step = line_height + 8.0f;
 
   const float margin = 16.0f;
-  const float avail_w = rect.w - margin * 2.0f;
-  const float card_w = std::max(360.0f, std::min(avail_w, 1400.0f));
-  const float card_h = std::max(220.0f, rect.h - margin * 2.0f);
+  const float card_w = std::clamp(rect.w - margin * 2.0f, 0.0f, 1400.0f);
+  const float card_h = std::max(0.0f, rect.h - margin * 2.0f);
+  if (card_w <= 0.0f || card_h <= 0.0f) {
+    return layout;
+  }
   const float card_x = rect.x + std::max(margin, (rect.w - card_w) * 0.5f);
   const float card_y = rect.y + margin;
   layout.card = SDL_FRect{card_x, card_y, card_w, card_h};
+  const float bottom = card_y + card_h;
+  const auto fits = [bottom](float y, float h) { return y + h <= bottom; };
 
   const float inset = 24.0f;
-  const float header_h = line_height * 2.0f + 24.0f;
+  const float header_h = std::min(card_h, line_height * 2.0f + 24.0f);
   layout.header = SDL_FRect{layout.card.x, layout.card.y, layout.card.w, header_h};
+  layout.title_fits = fits(card_y + 8.0f, line_height) && 8.0f + line_height <= header_h;
+  layout.subtitle_fits = layout.title_fits && header_h >= line_height * 2.0f + 24.0f;
 
   const float button_h = line_height + 12.0f;
   float block_h = 0.0f;
-  if (model.kind == WelcomeKind::ProjectHome && !model.remote.empty()) {
-    const float lines = 2.0f + (model.remote.detail.empty() ? 0.0f : 1.0f);
-    block_h = lines * (line_height + 6.0f) + 12.0f + (model.remote.retry ? button_h + 8.0f : 0.0f);
+  const float remote_lines = 2.0f + (model.remote.detail.empty() ? 0.0f : 1.0f);
+  const float remote_h = remote_lines * (line_height + 6.0f) + 12.0f + (model.remote.retry ? button_h + 8.0f : 0.0f);
+  const float remote_w = card_w - inset * 2.0f;
+  const float stage_w = remote_w / static_cast<float>(std::max<std::size_t>(1, model.remote.stages.size()));
+  if (model.kind == WelcomeKind::ProjectHome && !model.remote.empty() &&
+      fits(card_y + header_h + 12.0f, remote_h) && stage_w >= std::floor(line_height * 0.45f)) {
+    block_h = remote_h;
     layout.remote_block =
-        SDL_FRect{layout.card.x + inset, layout.card.y + header_h + 12.0f, layout.card.w - inset * 2.0f, block_h};
+        SDL_FRect{layout.card.x + inset, layout.card.y + header_h + 12.0f, remote_w, block_h};
     if (model.remote.retry) {
       layout.hit_regions.push_back(WelcomeHitRegion{
           .rect = SDL_FRect{layout.remote_block.x, layout.remote_block.y + block_h - button_h - 4.0f,
@@ -42,7 +53,7 @@ WelcomeLayout ComputeWelcomeLayout(const SDL_FRect& rect, const WelcomeViewModel
   }
 
   const float panels_y = layout.card.y + header_h + 16.0f + block_h;
-  const float panels_h = std::max(line_height * 3.0f, layout.card.h - header_h - 28.0f - block_h);
+  const float panels_h = std::max(0.0f, layout.card.h - header_h - 28.0f - block_h);
   const float gap = 32.0f;
   const float usable_w = layout.card.w - inset * 2.0f - gap;
   const float recents_w = usable_w * 0.54f;
@@ -58,17 +69,29 @@ WelcomeLayout ComputeWelcomeLayout(const SDL_FRect& rect, const WelcomeViewModel
   const float rows_bottom = layout.recents_panel.y + layout.recents_panel.h;
   const float button_w = std::min(360.0f, row_w);
 
-  const auto push_button = [&](float button_y, WelcomeHitRegion::Kind kind) {
+  layout.panel_headings_fit = fits(panels_y, line_height);
+
+  const auto push_button = [&](float button_y, WelcomeHitRegion::Kind kind) -> SDL_FRect {
+    const SDL_FRect button{row_x, button_y, button_w, button_h};
+    if (!fits(button_y, button_h)) {
+      return SDL_FRect{};
+    }
     layout.hit_regions.push_back(WelcomeHitRegion{
-        .rect = SDL_FRect{row_x, button_y, button_w, button_h},
+        .rect = button,
         .kind = kind,
         .recent_index = 0,
     });
+    return button;
   };
 
   const auto push_recent_rows = [&](float rows_top, WelcomeHitRegion::Kind kind,
                                     std::size_t count) {
     layout.recents_rows_top = rows_top;
+    const float caption_y = rows_top - line_height - 10.0f;
+    if (fits(caption_y, line_height)) {
+      layout.recents_caption_y = caption_y;
+    }
+    layout.empty_recents_fits = fits(rows_top, line_height);
     float row_y = rows_top;
     for (std::size_t i = 0; i < count; ++i) {
       if (row_y + row_h > rows_bottom) {
@@ -99,11 +122,9 @@ WelcomeLayout ComputeWelcomeLayout(const SDL_FRect& rect, const WelcomeViewModel
   }
 
   float button_y = layout.recents_panel.y + line_height + 8.0f;
-  layout.open_folder_rect = SDL_FRect{row_x, button_y, button_w, button_h};
-  push_button(button_y, WelcomeHitRegion::Kind::OpenFolder);
+  layout.open_folder_rect = push_button(button_y, WelcomeHitRegion::Kind::OpenFolder);
   button_y += button_h + 8.0f;
-  layout.open_remote_folder_rect = SDL_FRect{row_x, button_y, button_w, button_h};
-  push_button(button_y, WelcomeHitRegion::Kind::OpenRemoteFolder);
+  layout.open_remote_folder_rect = push_button(button_y, WelcomeHitRegion::Kind::OpenRemoteFolder);
 
   const float recents_caption_y = button_y + button_h + 16.0f;
   push_recent_rows(recents_caption_y + line_height + 10.0f, WelcomeHitRegion::Kind::RecentProject,

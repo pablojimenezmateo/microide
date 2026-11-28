@@ -6,6 +6,7 @@
 #include "editor/BreakpointStore.h"
 #include "editor/SingleLineEditor.h"
 #include "editor/EditorViewModel.h"
+#include "editor/EditorViewRenderer.h"
 #include "editor/TextViewport.h"
 #include "editor/WelcomeView.h"
 
@@ -1407,6 +1408,84 @@ void TestAShortStripTabDrawsNothingOutsideItself() {
   Expect(failures.empty(), "a short strip tab drew outside itself:" + failures);
 }
 
+editor::WelcomeViewModel WelcomeModelForPaint(editor::WelcomeKind kind, bool recents, bool remote) {
+  editor::WelcomeViewModel vm;
+  vm.kind = kind;
+  vm.title = "taskflow";
+  vm.subtitle = "Open a file, or jump back into a recent one.";
+  vm.start_heading = "Start";
+  vm.recents_heading = "Recent projects";
+  vm.open_folder_label = "Open Folder…";
+  vm.open_remote_folder_label = "Open Remote Folder…";
+  vm.empty_recents_label = "No recent projects";
+  vm.actions_heading = "Actions";
+  vm.recent_files_heading = "Recent files";
+  vm.new_file_label = "New File";
+  vm.open_file_label = "Open File…";
+  vm.find_in_project_label = "Find in Project…";
+  vm.empty_recent_files_label = "No recent files";
+  vm.retry_label = "Retry";
+  vm.shortcuts_heading = "Keyboard Shortcuts";
+  vm.shortcuts = {{.keys = "Ctrl+Shift+P", .label = "Command Palette…"}, {.keys = "Ctrl+P", .label = "Go to File…"}};
+  if (recents) {
+    for (const char* name : {"a.txt", "b.txt", "c.txt"}) {
+      vm.recent_files.push_back({.name = name, .path_display = "src", .path = name});
+      vm.recent_projects.push_back({.name = name, .path_display = "/p", .path = name});
+    }
+  }
+  if (remote) {
+    vm.remote = editor::WelcomeRemoteStatus{
+        .heading = "host",
+        .stages = {{.text = "Connect", .state = editor::WelcomeStageState::Done},
+                   {.text = "Sync", .state = editor::WelcomeStageState::Failed}},
+        .detail = "Connection refused",
+        .host = "host",
+        .retry = true};
+  }
+  return vm;
+}
+
+void TestTheWelcomePageDrawsNothingOutsideItsSurface() {
+  EnsureDummySdlVideoInitialized();
+  SoftwareCanvas canvas(1000, 520);
+  TextRenderer text_renderer;
+  const render::Theme theme{};
+  const bool was = render::PaintOverrunRecordingEnabled();
+  render::SetPaintOverrunRecording(true);
+  (void)render::TakePaintOverruns();
+  std::string failures;
+  for (const editor::WelcomeKind kind : {editor::WelcomeKind::ProjectHome, editor::WelcomeKind::NoProject}) {
+    for (const bool recents : {false, true}) {
+      for (const bool remote : {false, true}) {
+        if (remote && (!recents || kind == editor::WelcomeKind::NoProject)) {
+          continue;
+        }
+        const editor::WelcomeViewModel vm = WelcomeModelForPaint(kind, recents, remote);
+        const bool widths = recents;
+        for (float size = 1.0f; size <= (widths ? 840.0f : 420.0f); size += 3.0f) {
+          const bool tall = size > 420.0f;
+          const float height = tall ? 420.0f : size;
+          const SDL_FRect rect{20.0f, 10.0f, tall ? size - 420.0f : 900.0f, height};
+          {
+            const render::PaintElement welcome(canvas.renderer(), rect, "welcome");
+            editor::DrawWelcomeView(canvas.renderer(), text_renderer, theme, rect, vm);
+          }
+          if (const auto overruns = render::TakePaintOverruns(); !overruns.empty() && failures.size() < 400) {
+            const SDL_Rect& drew = overruns.front().draw_rect;
+            failures += std::string(" [") + (kind == editor::WelcomeKind::ProjectHome ? "project" : "no-project") +
+                        (recents ? " recents" : "") + (remote ? " remote" : "") + " " +
+                        std::to_string(static_cast<int>(rect.w)) + "x" + std::to_string(static_cast<int>(height)) +
+                        ": drew " + std::to_string(drew.x) + "," + std::to_string(drew.y) + " " +
+                        std::to_string(drew.w) + "x" + std::to_string(drew.h) + "]";
+          }
+        }
+      }
+    }
+  }
+  render::SetPaintOverrunRecording(was);
+  Expect(failures.empty(), "the welcome page drew outside its surface:" + failures);
+}
+
 void TestAWrappedHintDrawsNothingOutsideItsBox() {
   using namespace microide::workspace::detail;
   EnsureDummySdlVideoInitialized();
@@ -1770,6 +1849,8 @@ void RegisterRenderViewModelBuilderTests(std::vector<TestCase>& tests) {
   AddTest(tests, "RenderViewModelBuilder/AStripTabNeverDrawsOutsideItself", TestAStripTabNeverDrawsOutsideItself);
   AddTest(tests, "RenderViewModelBuilder/AShortStripTabDrawsNothingOutsideItself",
           TestAShortStripTabDrawsNothingOutsideItself);
+  AddTest(tests, "RenderViewModelBuilder/TheWelcomePageDrawsNothingOutsideItsSurface",
+          TestTheWelcomePageDrawsNothingOutsideItsSurface);
   AddTest(tests, "RenderViewModelBuilder/AWrappedHintDrawsNothingOutsideItsBox",
           TestAWrappedHintDrawsNothingOutsideItsBox);
   AddTest(tests, "RenderViewModelBuilder/TheFramesGitSidebarIsNotChangedByAMidFrameRebuild",

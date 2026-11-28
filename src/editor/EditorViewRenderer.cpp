@@ -85,25 +85,37 @@ void DrawFoldGutterMarker(SDL_Renderer* renderer,
   render::FillRectInDrawColor(renderer, vertical);
 }
 
-void DrawPlaceholderView(SDL_Renderer* renderer,
-                         const render::TextRenderer& text_renderer,
-                         const render::Theme& theme,
-                         const SDL_FRect& rect,
-                         const WelcomeViewModel& model) {
+}
+
+void DrawWelcomeView(SDL_Renderer* renderer,
+                     const render::TextRenderer& text_renderer,
+                     const render::Theme& theme,
+                     const SDL_FRect& rect,
+                     const WelcomeViewModel& model) {
   const float line_height = text_renderer.LineHeight();
   const WelcomeLayout layout = ComputeWelcomeLayout(rect, model, line_height);
   const SDL_FRect& card = layout.card;
+  if (card.w <= 0.0f || card.h <= 0.0f) {
+    return;
+  }
 
   render::DrawTitledCardFrame(renderer, theme, card, layout.header.h, render::CardStyle::Raised);
 
   const float inset_x = card.x + 20.0f;
-  text_renderer.DrawString(renderer, inset_x, card.y + 8.0f, theme.chrome_text,
-                           text_renderer.TruncateToWidthEphemeralView(model.title, card.w - 40.0f));
-  text_renderer.DrawString(
-      renderer, inset_x, card.y + layout.header.h - line_height - 4.0f, theme.text_secondary,
-      text_renderer.TruncateToWidthEphemeralView(model.subtitle, card.w - 40.0f));
+  if (layout.title_fits) {
+    text_renderer.DrawString(renderer, inset_x, card.y + 8.0f, theme.chrome_text,
+                             text_renderer.TruncateToWidthEphemeralView(model.title, card.w - 40.0f));
+  }
+  if (layout.subtitle_fits) {
+    text_renderer.DrawString(
+        renderer, inset_x, card.y + layout.header.h - line_height - 4.0f, theme.text_secondary,
+        text_renderer.TruncateToWidthEphemeralView(model.subtitle, card.w - 40.0f));
+  }
 
   const auto draw_button = [&](const SDL_FRect& button, std::string_view label) {
+    if (button.w <= 0.0f || button.h <= 0.0f) {
+      return;
+    }
     render::FillRect(renderer, button, theme.selection_strong);
     render::FillRect(renderer, SDL_FRect{button.x, button.y + 2.0f, 3.0f, button.h - 4.0f},
                      theme.accent);
@@ -126,10 +138,24 @@ void DrawPlaceholderView(SDL_Renderer* renderer,
   };
 
   const float caption_x = layout.recents_panel.x;
-  const float recents_caption_y = layout.recents_rows_top - line_height - 10.0f;
+  const auto draw_heading = [&](float x, float y, std::string_view heading, float width, bool fits) {
+    if (fits) {
+      text_renderer.DrawString(renderer, x, y, theme.text_muted,
+                               text_renderer.TruncateToWidthEphemeralView(heading, width));
+    }
+  };
+  const auto draw_recents_caption = [&](std::string_view heading) {
+    if (layout.recents_caption_y.has_value()) {
+      draw_heading(caption_x, *layout.recents_caption_y, heading, layout.recents_panel.w, true);
+    }
+  };
+  const auto draw_empty_recents = [&](std::string_view label) {
+    draw_heading(caption_x + 4.0f, layout.recents_rows_top, label, layout.recents_panel.w - 16.0f,
+                 layout.empty_recents_fits);
+  };
 
   if (model.kind == WelcomeKind::ProjectHome) {
-    if (!model.remote.empty()) {
+    if (layout.remote_block.h > 0.0f) {
       const SDL_FRect& block = layout.remote_block;
       const float row = line_height + 6.0f;
       text_renderer.DrawString(renderer, block.x, block.y, theme.text_secondary,
@@ -158,8 +184,8 @@ void DrawPlaceholderView(SDL_Renderer* renderer,
         }
       }
     }
-    text_renderer.DrawString(renderer, caption_x, layout.recents_panel.y, theme.text_muted,
-                             model.actions_heading);
+    draw_heading(caption_x, layout.recents_panel.y, model.actions_heading, layout.recents_panel.w,
+                 layout.panel_headings_fit);
     bool drew_file = false;
     for (const WelcomeHitRegion& region : layout.hit_regions) {
       switch (region.kind) {
@@ -180,21 +206,16 @@ void DrawPlaceholderView(SDL_Renderer* renderer,
           break;
       }
     }
-    text_renderer.DrawString(renderer, caption_x, recents_caption_y, theme.text_muted,
-                             model.recent_files_heading);
+    draw_recents_caption(model.recent_files_heading);
     if (!drew_file) {
-      text_renderer.DrawString(
-          renderer, caption_x + 4.0f, layout.recents_rows_top, theme.text_muted,
-          text_renderer.TruncateToWidthEphemeralView(model.empty_recent_files_label,
-                                                    layout.recents_panel.w - 16.0f));
+      draw_empty_recents(model.empty_recent_files_label);
     }
   } else {
-    text_renderer.DrawString(renderer, caption_x, layout.recents_panel.y, theme.text_muted,
-                             model.start_heading);
+    draw_heading(caption_x, layout.recents_panel.y, model.start_heading, layout.recents_panel.w,
+                 layout.panel_headings_fit);
     draw_button(layout.open_folder_rect, model.open_folder_label);
     draw_button(layout.open_remote_folder_rect, model.open_remote_folder_label);
-    text_renderer.DrawString(renderer, caption_x, recents_caption_y, theme.text_muted,
-                             model.recents_heading);
+    draw_recents_caption(model.recents_heading);
     bool drew_recent = false;
     for (const WelcomeHitRegion& region : layout.hit_regions) {
       if (region.kind != WelcomeHitRegion::Kind::RecentProject) {
@@ -204,15 +225,12 @@ void DrawPlaceholderView(SDL_Renderer* renderer,
       draw_recent_row(region, model.recent_projects[region.recent_index]);
     }
     if (!drew_recent) {
-      text_renderer.DrawString(
-          renderer, caption_x + 4.0f, layout.recents_rows_top, theme.text_muted,
-          text_renderer.TruncateToWidthEphemeralView(model.empty_recents_label,
-                                                    layout.recents_panel.w - 16.0f));
+      draw_empty_recents(model.empty_recents_label);
     }
   }
 
-  text_renderer.DrawString(renderer, layout.shortcuts_panel.x, layout.shortcuts_panel.y,
-                           theme.text_muted, model.shortcuts_heading);
+  draw_heading(layout.shortcuts_panel.x, layout.shortcuts_panel.y, model.shortcuts_heading,
+               layout.shortcuts_panel.w, layout.panel_headings_fit);
   const float keys_col = std::min(150.0f, layout.shortcuts_panel.w * 0.45f);
   const float sc_row_step = line_height + 6.0f;
   float sc_y = layout.shortcuts_panel.y + line_height + 14.0f;
@@ -229,8 +247,6 @@ void DrawPlaceholderView(SDL_Renderer* renderer,
                                  shortcut.label, layout.shortcuts_panel.w - keys_col - 8.0f));
     sc_y += sc_row_step;
   }
-}
-
 }
 
 SDL_FRect FoldGutterMarkerRect(float gutter_x,
@@ -536,7 +552,7 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
 
   if (viewport.is_placeholder()) {
     if (welcome_view != nullptr) {
-      DrawPlaceholderView(renderer, text_renderer, theme, rect, *welcome_view);
+      DrawWelcomeView(renderer, text_renderer, theme, rect, *welcome_view);
     }
     viewport.SetViewportSize(1, 1);
     return;

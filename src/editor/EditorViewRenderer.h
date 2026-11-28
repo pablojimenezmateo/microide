@@ -60,6 +60,12 @@ SDL_FRect FoldGutterMarkerRect(float gutter_x,
                                float row_y,
                                float line_height);
 
+void DrawWelcomeView(SDL_Renderer* renderer,
+                     const render::TextRenderer& text_renderer,
+                     const render::Theme& theme,
+                     const SDL_FRect& rect,
+                     const WelcomeViewModel& model);
+
 inline constexpr std::size_t kNoStickyBand = 0;
 
 class EditorViewRenderer {

@@ -5,6 +5,7 @@
 
 #include <cstddef>
 #include <filesystem>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -116,6 +117,11 @@ struct WelcomeLayout {
   SDL_FRect open_remote_folder_rect{};
   SDL_FRect remote_block{};
   float recents_rows_top = 0.0f;
+  std::optional<float> recents_caption_y;
+  bool title_fits = false;
+  bool subtitle_fits = false;
+  bool panel_headings_fit = false;
+  bool empty_recents_fits = false;
   std::vector<WelcomeHitRegion> hit_regions;
 };
 
