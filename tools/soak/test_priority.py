@@ -118,6 +118,22 @@ class PlateauTests(unittest.TestCase):
         self.assertEqual(stats["quiet_runs"], 0, "a new finding is new")
 
 
+class ReplayTurnTests(unittest.TestCase):
+    def test_checks_and_verifications_take_turns_when_both_wait(self):
+        state = {"pending_checks": ["c1", "c2", "c3"], "pending_verifies": ["v1"]}
+        turns = []
+        for _ in range(3):
+            kind = soak.next_replay_kind(state)
+            turns.append(kind)
+            state["last_replay"] = kind
+        self.assertEqual(turns, ["check", "verify", "check"])
+
+    def test_alone_either_queue_has_every_turn(self):
+        self.assertEqual(soak.next_replay_kind({"pending_checks": ["c"], "last_replay": "check"}), "check")
+        self.assertEqual(soak.next_replay_kind({"pending_verifies": ["v"], "last_replay": "verify"}), "verify")
+        self.assertIsNone(soak.next_replay_kind({}))
+
+
 class PriorityTests(unittest.TestCase):
     def test_severity_leads(self):
         stale = entry("a", "log", "log: QA-STALE frame=<n>", count=900, deterministic=True)

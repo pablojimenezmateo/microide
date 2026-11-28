@@ -678,6 +678,17 @@ def priority_key(entry: ld.Entry) -> tuple:
     return (is_quiet(entry), impact_tier(entry), tiny_only(entry), det, -entry.count, entry.sig)
 
 
+def next_replay_kind(state: dict[str, Any]) -> str | None:
+    """Whether the next replay job checks a new finding or verifies a fix: they
+    take turns while both wait. Checks went first, always, and with room for one
+    replay at a time the acceptance run's two verifications waited behind thirty
+    checks of an hour each."""
+    checks, verifies = bool(state.get("pending_checks")), bool(state.get("pending_verifies"))
+    if checks and verifies:
+        return "verify" if state.get("last_replay") == "check" else "check"
+    return "check" if checks else ("verify" if verifies else None)
+
+
 CHECK_LOW_TIER_EVERY = 3
 
 
@@ -2869,23 +2880,22 @@ def cmd_run(args: argparse.Namespace) -> int:
             log(f"job budget {cap} (load {os.getloadavg()[0]:.1f}, {memory_available()[0] / 2**30:.0f} GB available, "
                 f"{len(jobs)} running, {slots(jobs)} slots)")
             last_cap = cap
-        if pending and replay_room(jobs, cap) and busy_reason(our_cores() or CORES_PER_JOB * slots(jobs), job_load.others(os.getloadavg()[0])) is None:
-            # Checks first, up to their share (replay_room): a new finding's rate
-            # and minimal replay are worth more than another fresh run. A check
-            # holds three displays, so it counts as three jobs.
-            sig = next_check(pending, ledger().entries(), int(state.get("checks_started", 0)))
-            state["checks_started"] = int(state.get("checks_started", 0)) + 1
-            pending.remove(sig)
-            jobs.append(start_check(sig, state))
-            log(f"check {sig}")
-            save_state(state)
-        verifies = state.get("pending_verifies", [])
-        if verifies and replay_room(jobs, cap) and busy_reason(our_cores() or CORES_PER_JOB * slots(jobs), job_load.others(os.getloadavg()[0])) is None:
-            # A fix's verification next, as a job of its own like a check (three
-            # displays): it used to run inline here and hold every start behind it.
-            sig = verifies.pop(0)
-            jobs.append(start_verify(sig, state))
-            log(f"verify {sig}")
+        replay = next_replay_kind(state)
+        if replay is not None and replay_room(jobs, cap) and busy_reason(our_cores() or CORES_PER_JOB * slots(jobs), job_load.others(os.getloadavg()[0])) is None:
+            # Replays before fresh runs, up to their share (replay_room): a new
+            # finding's rate and minimal replay, and a fix's verification, are
+            # worth more than another fresh run. Each holds three displays, so
+            # counts as three jobs.
+            if replay == "check":
+                sig = next_check(pending, ledger().entries(), int(state.get("checks_started", 0)))
+                state["checks_started"] = int(state.get("checks_started", 0)) + 1
+                pending.remove(sig)
+                jobs.append(start_check(sig, state))
+            else:
+                sig = state["pending_verifies"].pop(0)
+                jobs.append(start_verify(sig, state))
+            state["last_replay"] = replay
+            log(f"{replay} {sig}")
             state["current"] = [j.cell for j in jobs]
             save_state(state)
         if not any(job.type is HUNT_JOB for job in jobs) and slots(jobs) < cap and not PAUSE.exists() \
