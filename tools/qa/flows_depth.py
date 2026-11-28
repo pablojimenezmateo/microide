@@ -446,6 +446,10 @@ def flow_save_disk_full(app: q.App) -> None:
         app.type("x")
         app.query("crash-points", {"arm": f"fail=ENOSPC:{site}@{file}#1"})
         app.key("ctrl+s")
+        # The save writes off the main thread: wait for it to reach the armed
+        # step (a `#1` rule disarms itself when it fires) before disarming. The
+        # row alone is no sign -- the previous step's row is still up.
+        app.wait_until(lambda: not app.query("crash-points").get("armed"), 5.0, f"the save to reach {site}")
         app.wait_until(lambda: any("Failed to save full.txt" in (n.get("message") or "")
                                    for n in app.query("notifications")), 5.0,
                        f"a row saying the save at {site} failed ({app.query('notifications')})")
