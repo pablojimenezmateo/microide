@@ -26,6 +26,7 @@ import collections
 import glob
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -187,12 +188,13 @@ def report_markdown(summary: dict[str, Any], sha: str, runs: int) -> str:
 
 
 def export(binary: Path, objects: list[Path], profdata: Path, sources: list[str] | None = None,
-           summary_only: bool = True, timeout: float = 1800.0) -> dict[str, Any]:
+           summary_only: bool = True, timeout: float = 1800.0, branches: bool = False) -> dict[str, Any]:
     cov = tool("llvm-cov")
     if cov is None:
         raise RuntimeError("llvm-cov is not installed")
+    detail = ["-skip-expansions"] + ([] if branches else ["-skip-branches"])
     command = [cov, "export", "-format=text", f"-instr-profile={profdata}", f"-ignore-filename-regex={IGNORE}",
-               *(["-summary-only"] if summary_only else ["-skip-expansions", "-skip-branches"]), str(binary)]
+               *(["-summary-only"] if summary_only else detail), str(binary)]
     for other in objects:
         command += ["-object", str(other)]
     command += sources or []
@@ -202,17 +204,94 @@ def export(binary: Path, objects: list[Path], profdata: Path, sources: list[str]
     return json.loads(result.stdout)
 
 
+_HUNK = re.compile(r"^@@ -\S+ \+(\d+)(?:,(\d+))? @@", re.MULTILINE)
+
+
+def changed_lines(diff: str) -> dict[str, set[int]]:
+    """The new-side lines a `git diff -U0` adds or changes, per file under src/
+    (keyed by the path under it); a deleted file has none."""
+    changed: dict[str, set[int]] = {}
+    for chunk in diff.split("\ndiff --git "):
+        target = re.search(r"^\+\+\+ b/src/(\S+)$", chunk, re.MULTILINE)
+        if target is None:
+            continue
+        lines = {start + offset for match in _HUNK.finditer(chunk)
+                 for start, count in [(int(match.group(1)), int(match.group(2) or 1))]
+                 for offset in range(count)}
+        if lines:
+            changed[target.group(1)] = lines
+    return changed
+
+
+def changed_branches(export_data: dict[str, Any], changed: dict[str, set[int]],
+                     source_root: str) -> dict[str, list[int]]:
+    """For each changed file, [executed, count] of the branch conditions on its
+    changed lines, each branch counted as llvm-cov does: once taken, once not."""
+    out: dict[str, list[int]] = {}
+    for unit in export_data.get("data", []):
+        for entry in unit.get("files", []):
+            name = str(entry.get("filename", ""))
+            if not name.startswith(source_root) or name[len(source_root):] not in changed:
+                continue
+            rel = name[len(source_root):]
+            counts = out.setdefault(rel, [0, 0])
+            for branch in entry.get("branches", []):
+                if branch[0] in changed[rel]:
+                    counts[0] += (branch[4] > 0) + (branch[5] > 0)
+                    counts[1] += 2
+    return out
+
+
+def changed_markdown(per_file: dict[str, list[int]], base: str, sha: str) -> str:
+    """The report's section on the code the commits since the last report changed."""
+    rows = sorted(((counts[0] / counts[1], name) for name, counts in per_file.items() if counts[1]))
+    executed = sum(per_file[name][0] for _, name in rows)
+    total = sum(per_file[name][1] for _, name in rows)
+    lines = ["", f"## Changed since the last report ({base[:12]}..{sha[:12]})", "",
+             f"Branch conditions on the changed lines the soak executed: **{executed} of {total}** "
+             "(each branch once taken, once not). New code no job reaches is code the soak cannot "
+             "find a defect in yet.", ""]
+    if rows:
+        lines += ["| file | branch conditions executed |", "|---|---|"]
+        lines += [f"| `{name}` | {per_file[name][0]} of {per_file[name][1]} |" for _, name in rows[:60]]
+    return "\n".join(lines) + "\n"
+
+
+def changed_since(binary: Path, objects: list[Path], profdata: Path, source_root: Path, base: str,
+                  sha: str) -> dict[str, list[int]]:
+    repo = source_root.resolve().parent
+    diff = subprocess.run(["git", "diff", "-U0", "--no-color", base, sha, "--", "src"], cwd=repo,
+                          capture_output=True, text=True, timeout=300)
+    if diff.returncode != 0:
+        raise RuntimeError((diff.stderr or "git diff failed").strip()[-400:])
+    changed = changed_lines(diff.stdout)
+    if not changed:
+        return {}
+    root = str(source_root.resolve()) + "/"
+    data = export(binary, objects, profdata, [root + name for name in sorted(changed)], summary_only=False,
+                  branches=True)
+    return changed_branches(data, changed, root)
+
+
 def write_report(out: Path, binary: Path, objects: list[Path], profdata: Path, sha: str, runs: int,
-                 source_root: Path) -> dict[str, Any]:
+                 source_root: Path, since: str = "") -> dict[str, Any]:
     summary = summarize(export(binary, objects, profdata), str(source_root.resolve()) + "/")
     if not summary["files"]:
         raise RuntimeError(f"no file of the report is under {source_root}: the binary was built elsewhere")
     out.mkdir(parents=True, exist_ok=True)
     record = {"t": time.time(), "sha": sha, "runs": runs, **summary}
+    markdown = report_markdown(summary, sha, runs)
+    line = {"t": round(record["t"]), "sha": sha, "runs": runs, **summary["totals"]}
+    if since and since != sha:
+        per_file = changed_since(binary, objects, profdata, source_root, since, sha)
+        record["changed"] = {"base": since, "files": per_file}
+        line["changed_branches"] = [sum(c[0] for c in per_file.values()), sum(c[1] for c in per_file.values())]
+        line["since"] = since
+        markdown += changed_markdown(per_file, since, sha)
     (out / "code-coverage.json").write_text(json.dumps(record))
-    (out / "code-coverage.md").write_text(report_markdown(summary, sha, runs))
+    (out / "code-coverage.md").write_text(markdown)
     with open(out / "code-coverage.jsonl", "a") as history:
-        history.write(json.dumps({"t": round(record["t"]), "sha": sha, "runs": runs, **summary["totals"]}) + "\n")
+        history.write(json.dumps(line) + "\n")
     return record
 
 
@@ -257,13 +336,16 @@ def main() -> int:
             command.add_argument("--out", type=Path, required=True)
             command.add_argument("--sha", default="")
             command.add_argument("--runs", type=int, default=0)
+            command.add_argument("--since", default="",
+                                 help="also report the branches on the lines changed since this commit")
             command.add_argument("--root", type=Path, required=True,
                                  help="the src/ directory of the tree the binary was built from")
         else:
             command.add_argument("sources", nargs="+")
     args = parser.parse_args()
     if args.mode == "report":
-        record = write_report(args.out, args.binary, args.object, args.profdata, args.sha, args.runs, args.root)
+        record = write_report(args.out, args.binary, args.object, args.profdata, args.sha, args.runs, args.root,
+                              args.since)
         totals = record["totals"]
         print(f"lines {percent(totals['lines']).strip()}, functions {percent(totals['functions']).strip()}, "
               f"branches {percent(totals['branches']).strip()}; {args.out / 'code-coverage.md'}")

@@ -1174,6 +1174,21 @@ def merge_code_profile(job: Job, state: dict[str, Any], log) -> None:
         log(f"  coverage: no profile from {job.cell} seed {job.seed}: {failure}")
 
 
+def previous_report_sha(sha: str) -> str:
+    """The commit of the newest coverage report at another commit than `sha`:
+    the base of the report's changed-code section (codecov.changed_since)."""
+    try:
+        lines = (SOAK / "code-coverage.jsonl").read_text().splitlines()
+    except OSError:
+        return ""
+    for line in reversed(lines):
+        with contextlib.suppress(ValueError, AttributeError):
+            earlier = str(json.loads(line).get("sha") or "")
+            if earlier and earlier != sha:
+                return earlier
+    return ""
+
+
 def refresh_code_report(state: dict[str, Any], log) -> None:
     """Writes code-coverage.md / .json from the merged profile against the newest
     coverage build (codecov.py), when runs have been merged since the last one."""
@@ -1183,9 +1198,11 @@ def refresh_code_report(state: dict[str, Any], log) -> None:
         return
     binary = Path(good["binary"])
     server = binary.parent / "microide-server"
+    since = previous_report_sha(good["sha"])
     command = ["nice", "-n", "19", sys.executable, str(HERE / "codecov.py"), "report", "--binary", str(binary),
                *(["--object", str(server)] if server.exists() else []), "--profdata", str(CODE_PROFILE),
-               "--out", str(SOAK), "--sha", good["sha"], "--runs", str(runs), "--root", str(WORKTREE / "src")]
+               "--out", str(SOAK), "--sha", good["sha"], "--runs", str(runs), "--root", str(WORKTREE / "src"),
+               *(["--since", since] if since else [])]
     try:
         result = subprocess.run(command, capture_output=True, text=True, timeout=2400)
     except (OSError, subprocess.TimeoutExpired) as error:
