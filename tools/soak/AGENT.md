@@ -55,8 +55,9 @@ only, a failing-first test for every fix, one commit per fix, and a TD entry in
    them (`{"oracle": ...}` rows; records from before 2026-11-11 lack them, so an
    old undo finding never replays), and an undo finding keeps the text before
    and after as `undo-before.txt` / `undo-after.txt` in its evidence.
-2. **Claim.** `tools/soak/soak.py ledger claim <sig> <your-name>`, so two agents
-   never chase one defect.
+2. **Claim.** `tools/soak/soak.py ledger claim <sig> <your-name> --family`, so two
+   agents never chase one defect (`--family` claims every open signature of the
+   family `status` lists it under; leave it off to claim one signature).
 3. **Reproduce.** Build the tree at HEAD (`cmake --build build --target microide`)
    and run the minimal replay from `FINDING.md`. It must reproduce on HEAD; if it
    does not, check whether a later commit fixed it (`git log` since the finding's
@@ -107,8 +108,9 @@ only, a failing-first test for every fix, one commit per fix, and a TD entry in
    (`CLAUDE.md` § Development Workflow), and the lane the area needs (`qa` for
    paint/hover/focus, `asan` for memory).
 8. **Commit** the test and the fix (one commit, or test then fix), then mark it:
-   `tools/soak/soak.py ledger fixed <sig> <commit>` -- every signature of the
-   family the fix covers. What happens next depends on whether a replay ever
+   `tools/soak/soak.py ledger fixed <sig> <commit> --family` books every open
+   signature of the family; without `--family`, book each signature the fix
+   covers. What happens next depends on whether a replay ever
    reproduced it. If one did, the runner replays it once the commit is in its
    build (as many times as its rate needs) and marks it `verified`, or
    `reopened` if it is still there. If none did, a replay proves nothing, and

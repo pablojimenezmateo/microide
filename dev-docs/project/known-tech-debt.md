@@ -26,10 +26,15 @@ coverage build in the rotation, `tools/soak/codecov.py`, `soak.py coverage`), an
 a replay says where it left the run's path (`monkey_model.Divergence`; `health`
 splits "no replay reproduces" by it). Open, in the order they would pay:
 
-1. **Signatures are not defects.** Data and undo signatures key on the file
-   name, stale-paint ones on the clip count: 1336 signatures for a few dozen
-   defects. `soak.py` groups them into families for reading; the ledger still
-   books a fix per signature.
+1. **Signatures are not defects: DONE 2026-11-28 as families.** Data and undo
+   signatures key on the file name, stale-paint ones on the clip count: 1336
+   signatures for a few dozen defects. Signatures stay as they are (a replay
+   checks its own); `soak.py` groups them into families -- a stale element is one
+   family however the frame caught it, an IME composition one whatever the file
+   -- `status` lists the stale-paint families too, a check goes to a family
+   nobody has measured before a twin of one that was (`next_check`), and
+   `ledger claim|fixed|close SIG --family` books every open signature of SIG's
+   family at once.
 2. **The fault-injection jobs are not recorded: WON'T DO (decided 2026-11-26).**
    rr cannot follow the remote server (it runs under the loopback sshd, not under
    the app), and recording the sshd's whole session tree would make every remote

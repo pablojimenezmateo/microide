@@ -3161,6 +3161,14 @@ def command_gaps(ran: dict[str, int], registered: list[str] | None = None) -> li
             + (", ".join(f"`{n}` {c}" for n, c in rare) or "none"), ""]
 
 
+def family_members(entries: dict[str, ld.Entry], sig: str) -> list[str]:
+    """`sig` and every other still-open signature of its family (family)."""
+    chosen = entries[sig]
+    name = family(chosen.kind, chosen.label)
+    return [sig] + sorted(other for other, e in entries.items() if other != sig
+                          and e.status in ("new", "reopened", "claimed") and family(e.kind, e.label) == name)
+
+
 def cmd_ledger(args: argparse.Namespace) -> int:
     book = ledger()
     entries = book.entries()
@@ -3176,13 +3184,20 @@ def cmd_ledger(args: argparse.Namespace) -> int:
         md = FINDINGS / args.sig / "FINDING.md"
         if md.exists():
             print(md.read_text())
-    elif args.action == "claim":
-        book.append(args.sig, "claimed", by=args.extra or os.environ.get("USER", "agent"))
+        return 0
+    targets = family_members(entries, args.sig) if args.family else [args.sig]
+    if len(targets) > 1:
+        print(f"{args.action}: {len(targets)} signatures of {family(entries[args.sig].kind, entries[args.sig].label)}")
+    if args.action == "claim":
+        for sig in targets:
+            book.append(sig, "claimed", by=args.extra or os.environ.get("USER", "agent"))
     elif args.action == "fixed":
         if not args.extra:
             print("fixed needs the fix commit", file=sys.stderr)
             return 2
-        book.append(args.sig, "fixed", commit=git("rev-parse", args.extra))
+        commit = git("rev-parse", args.extra)
+        for sig in targets:
+            book.append(sig, "fixed", commit=commit)
     elif args.action == "reopen":
         book.append(args.sig, "reopened", note=args.extra or "")
     elif args.action == "close":
@@ -3190,7 +3205,8 @@ def cmd_ledger(args: argparse.Namespace) -> int:
         if not args.extra:
             print("close needs the reason", file=sys.stderr)
             return 2
-        book.append(args.sig, "closed", by=os.environ.get("USER", "agent"), note=args.extra)
+        for sig in targets:
+            book.append(sig, "closed", by=os.environ.get("USER", "agent"), note=args.extra)
     elif args.action == "note":
         book.append(args.sig, "note", text=args.extra or "")
     return 0
@@ -3315,6 +3331,8 @@ def main() -> int:
     led.add_argument("action", nargs="?", default="list", choices=("list", "show", "claim", "fixed", "reopen", "close", "note"))
     led.add_argument("sig", nargs="?")
     led.add_argument("extra", nargs="?")
+    led.add_argument("--family", action="store_true",
+                     help="claim, fixed, close: every open signature of SIG's family, not SIG alone")
     args = parser.parse_args()
     return {"run": cmd_run, "status": cmd_status, "health": cmd_health, "report": cmd_report, "ledger": cmd_ledger,
             "build": cmd_build, "check": cmd_check, "verify": cmd_verify, "gc": cmd_gc, "hunt": cmd_hunt, "coverage": cmd_coverage,
