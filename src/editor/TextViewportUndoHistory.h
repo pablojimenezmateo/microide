@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdint>
 #include <deque>
 #include <optional>
 #include <string>
@@ -61,6 +62,7 @@ class TextViewportUndoHistory {
     ViewState before_state;
     ViewState after_state;
     std::size_t byte_size = 0;
+    std::uint64_t serial = 0;
 
     std::size_t before_line_count() const { return is_inline ? 1 : before_lines.size(); }
     std::size_t after_line_count() const { return is_inline ? 1 : after_lines.size(); }
@@ -96,6 +98,17 @@ class TextViewportUndoHistory {
   void MarkSaved();
   void MarkNoPositionSaved();
   bool HasSavedPosition() const;
+
+  struct SavePoint {
+    std::uint64_t serial = 0;
+    std::uint64_t base_epoch = 0;
+  };
+  SavePoint CaptureSavePoint();
+  void MarkSavedAt(const SavePoint& point);
+  bool IsAtSavePoint(const SavePoint& point) const;
+
+  const std::deque<Entry>& UndoStackForTesting() const { return undo_stack_; }
+  const std::deque<Entry>& RedoStackForTesting() const { return redo_stack_; }
 
   std::size_t ApproximateResidentBytes() const;
 
@@ -140,6 +153,8 @@ class TextViewportUndoHistory {
   std::vector<UndoGroupFrame> group_stack_;
   CoalesceKind active_run_kind_ = CoalesceKind::None;
   bool active_run_last_space_ = false;
+  std::uint64_t next_serial_ = 1;
+  std::uint64_t base_epoch_ = 0;
 };
 
 }

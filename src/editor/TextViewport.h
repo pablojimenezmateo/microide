@@ -12,6 +12,7 @@
 
 #include "editor/CaretNeighborhood.h"
 #include "editor/ColumnSelection.h"
+#include "editor/DocumentSnapshot.h"
 #include "editor/EditTypes.h"
 #include "editor/HighlightPrefetch.h"
 #include "editor/IndentDetect.h"
@@ -101,6 +102,35 @@ class TextViewport {
   enum class SaveTransforms { Apply, Skip };
   [[nodiscard]] bool Save(project::FileWriteGate& gate, std::error_code* error = nullptr,
                           SaveTransforms transforms = SaveTransforms::Apply);
+
+  struct PreparedSave {
+    const void* document = nullptr;
+    std::uint64_t load_generation = 0;
+    std::filesystem::path path;
+    DocumentSnapshot snapshot;
+    LineEnding line_ending = LineEnding::LF;
+    bool utf8_bom = false;
+    bool trim_trailing_whitespace = false;
+    bool ensure_final_newline = false;
+    util::WriteTarget target = util::WriteTarget::Replace;
+    std::uint64_t content_revision = 0;
+    TextViewportUndoHistory::SavePoint save_point;
+    bool dirty = false;
+    util::FileSignature disk_signature;
+  };
+  struct WrittenSave {
+    project::FileWriteGate::Result result;
+    std::optional<std::vector<std::string>> normalized;
+    std::size_t bytes = 0;
+    std::string digest;
+  };
+  [[nodiscard]] std::optional<PreparedSave> PrepareSave(SaveTransforms transforms = SaveTransforms::Apply);
+  [[nodiscard]] static WrittenSave WritePreparedSave(const PreparedSave& prepared, project::FileWriteGate& gate);
+  [[nodiscard]] bool ApplyWrittenSave(const PreparedSave& prepared, WrittenSave written,
+                                      std::error_code* error = nullptr);
+  bool IsDocumentOf(const PreparedSave& prepared) const {
+    return document_.get() == prepared.document && document_->load_generation == prepared.load_generation;
+  }
   void SetSaveTrimTrailingWhitespace(bool enabled) { save_trim_trailing_whitespace_ = enabled; }
   void SetSaveEnsureFinalNewline(bool enabled) { save_ensure_final_newline_ = enabled; }
   void SetSaveLineEnding(std::optional<LineEnding> ending) { save_line_ending_override_ = ending; }
@@ -477,6 +507,7 @@ class TextViewport {
     bool placeholder = true;
     bool dirty = false;
     std::uint64_t content_revision = NextDocumentRevisionBase();
+    std::uint64_t load_generation = 0;
     std::uint64_t head_content_revision = 0;
     std::uint64_t syntax_revision = 0;
     std::uint64_t layout_shape_revision = 0;

@@ -32,6 +32,7 @@ std::size_t EntryContentBytes(const TextViewportUndoHistory::Entry& entry) {
 
 void TextViewportUndoHistory::AppendUndoEntry(Entry entry) {
   entry.byte_size = EntryContentBytes(entry);
+  entry.serial = next_serial_++;
   if (entry.is_multi_range()) {
     std::size_t kept = entry.before_lines.size() + entry.after_lines.size();
     std::size_t highest_before_end = entry.start_line + entry.before_lines.size();
@@ -54,6 +55,7 @@ void TextViewportUndoHistory::AppendUndoEntry(Entry entry) {
 void TextViewportUndoHistory::EnforceHistoryBudget() {
   while (undo_stack_.size() > kMaxHistoryEntries) {
     undo_stack_.pop_front();
+    ++base_epoch_;
   }
   std::size_t total = 0;
   for (const Entry& entry : undo_stack_) {
@@ -62,6 +64,7 @@ void TextViewportUndoHistory::EnforceHistoryBudget() {
   while (undo_stack_.size() > 1 && total > kMaxHistoryBytes) {
     total -= undo_stack_.front().byte_size;
     undo_stack_.pop_front();
+    ++base_epoch_;
   }
 }
 
@@ -414,8 +417,46 @@ void TextViewportUndoHistory::MarkSaved() {
   EndCoalesceRun();
 }
 
+TextViewportUndoHistory::SavePoint TextViewportUndoHistory::CaptureSavePoint() {
+  EndCoalesceRun();
+  return SavePoint{.serial = undo_stack_.empty() ? 0 : undo_stack_.back().serial, .base_epoch = base_epoch_};
+}
+
+void TextViewportUndoHistory::MarkSavedAt(const SavePoint& point) {
+  MarkNoPositionSaved();
+  std::vector<Entry*> timeline;
+  timeline.reserve(undo_stack_.size() + redo_stack_.size());
+  for (Entry& entry : undo_stack_) {
+    timeline.push_back(&entry);
+  }
+  for (auto it = redo_stack_.rbegin(); it != redo_stack_.rend(); ++it) {
+    timeline.push_back(&*it);
+  }
+  if (point.serial == 0) {
+    if (point.base_epoch == base_epoch_ && !timeline.empty()) {
+      timeline.front()->before_state.dirty = false;
+    }
+    return;
+  }
+  const auto saved = std::find_if(timeline.begin(), timeline.end(),
+                                  [&point](const Entry* entry) { return entry->serial == point.serial; });
+  if (saved == timeline.end()) {
+    return;
+  }
+  (*saved)->after_state.dirty = false;
+  if (std::next(saved) != timeline.end()) {
+    (*std::next(saved))->before_state.dirty = false;
+  }
+}
+
+bool TextViewportUndoHistory::IsAtSavePoint(const SavePoint& point) const {
+  const std::uint64_t top = undo_stack_.empty() ? 0 : undo_stack_.back().serial;
+  return top == point.serial && (point.serial != 0 || point.base_epoch == base_epoch_);
+}
+
 void TextViewportUndoHistory::Clear() {
   EndCoalesceRun();
+  ++base_epoch_;
   undo_stack_.clear();
   redo_stack_.clear();
   group_stack_.clear();

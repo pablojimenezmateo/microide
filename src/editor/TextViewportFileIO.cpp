@@ -203,6 +203,33 @@ bool BufferIoTraceEnabled() {
   return enabled;
 }
 
+void TraceSaveWriting(const TextViewport::PreparedSave& prepared, const TextViewport::WrittenSave& written) {
+  if (!BufferIoTraceEnabled()) {
+    return;
+  }
+  const util::FileSignature& disk = prepared.disk_signature;
+  util::Log(std::format(
+      "microide buffer-io: writing path={} doc={} rev={} dirty={} bytes={} sha={} "
+      "disk_exists={} disk_size={} disk_mtime={} disk_racy={}",
+      prepared.path.string(), prepared.document, prepared.content_revision, prepared.dirty ? 1 : 0,
+      written.bytes, written.digest, disk.exists ? 1 : 0, disk.size, disk.mtime_ticks, disk.racy ? 1 : 0));
+}
+
+std::string SerializeSnapshot(const DocumentSnapshot& snapshot, util::LineEnding line_ending) {
+  const std::string_view separator = util::LineEndingSeparator(line_ending);
+  std::string text;
+  text.reserve(snapshot.ByteSize() + snapshot.LineCount() * separator.size());
+  bool first = true;
+  snapshot.ForEachLine([&](std::string_view line) {
+    if (!first) {
+      text += separator;
+    }
+    first = false;
+    text += line;
+  });
+  return text;
+}
+
 std::string BufferIoDigest(std::string_view bytes) {
   if (!BufferIoTraceEnabled()) {
     return {};
@@ -242,66 +269,98 @@ void TextViewport::TraceBufferIo(std::string_view event, std::size_t size, std::
 }
 
 bool TextViewport::Save(project::FileWriteGate& gate, std::error_code* error, SaveTransforms transforms) {
+  std::optional<PreparedSave> prepared = PrepareSave(transforms);
+  if (!prepared.has_value()) {
+    return false;
+  }
+  return ApplyWrittenSave(*prepared, WritePreparedSave(*prepared, gate), error);
+}
+
+std::optional<TextViewport::PreparedSave> TextViewport::PrepareSave(SaveTransforms transforms) {
   EnsureDocument();
-  if (document_->path.empty()) {
-    return false;
+  if (document_->path.empty() || read_only_) {
+    return std::nullopt;
   }
-  if (read_only_) {
-    return false;
-  }
-
   const bool opaque = document_->encoding == TextEncoding::Bytes;
-  const bool wants_transform = transforms == SaveTransforms::Apply && !opaque &&
-                               (save_trim_trailing_whitespace_ || save_ensure_final_newline_);
-  std::vector<std::string> normalized;
-  bool changed = false;
-  if (wants_transform) {
-    normalized = document_->lines.ToVector();
-    if (save_trim_trailing_whitespace_ && TrimTrailingWhitespace(normalized)) {
+  const bool wants_transform = transforms == SaveTransforms::Apply && !opaque;
+  return PreparedSave{
+      .document = document_.get(),
+      .load_generation = document_->load_generation,
+      .path = document_->path,
+      .snapshot = document_->lines.SnapshotDocument(),
+      .line_ending = opaque ? document_->line_ending
+                            : save_line_ending_override_.value_or(document_->line_ending),
+      .utf8_bom = document_->utf8_bom,
+      .trim_trailing_whitespace = wants_transform && save_trim_trailing_whitespace_,
+      .ensure_final_newline = wants_transform && save_ensure_final_newline_,
+      .target = document_->disk_signature.exists ? util::WriteTarget::Replace : util::WriteTarget::CreateNew,
+      .content_revision = content_revision(),
+      .save_point = document_->undo_history.CaptureSavePoint(),
+      .dirty = document_->dirty,
+      .disk_signature = document_->disk_signature,
+  };
+}
+
+TextViewport::WrittenSave TextViewport::WritePreparedSave(const PreparedSave& prepared,
+                                                         project::FileWriteGate& gate) {
+  WrittenSave written;
+  std::string text;
+  if (prepared.trim_trailing_whitespace || prepared.ensure_final_newline) {
+    std::vector<std::string> normalized = prepared.snapshot.ToLines();
+    bool changed = prepared.trim_trailing_whitespace && TrimTrailingWhitespace(normalized);
+    if (prepared.ensure_final_newline && EnsureSingleFinalNewline(normalized)) {
       changed = true;
     }
-    if (save_ensure_final_newline_ && EnsureSingleFinalNewline(normalized)) {
-      changed = true;
+    if (changed) {
+      text = util::SerializeLines(normalized, prepared.line_ending);
+      written.normalized = std::move(normalized);
     }
   }
-
-  const LineEnding effective_ending =
-      opaque ? document_->line_ending : save_line_ending_override_.value_or(document_->line_ending);
-  std::string text =
-      changed ? util::SerializeLines(normalized, effective_ending)
-              : util::SerializeLinesStreaming(LineSpan(document_->lines), effective_ending);
-  if (document_->utf8_bom) {
+  if (!written.normalized.has_value()) {
+    text = SerializeSnapshot(prepared.snapshot, prepared.line_ending);
+  }
+  if (prepared.utf8_bom) {
     text.insert(0, util::kUtf8Bom);
   }
-  const util::WriteTarget target =
-      document_->disk_signature.exists ? util::WriteTarget::Replace : util::WriteTarget::CreateNew;
-  const std::string digest = BufferIoDigest(text);
-  TraceBufferIo("writing", text.size(), digest);
-  const project::FileWriteGate::Result written = gate.WriteText(
-      document_->path, text, project::FileWriteGate::Signature::Capture, target);
-  if (!written.ok) {
+  written.bytes = text.size();
+  written.digest = BufferIoDigest(text);
+  TraceSaveWriting(prepared, written);
+  written.result = gate.WriteText(prepared.path, text, project::FileWriteGate::Signature::Capture, prepared.target);
+  return written;
+}
+
+bool TextViewport::ApplyWrittenSave(const PreparedSave& prepared, WrittenSave written, std::error_code* error) {
+  if (!IsDocumentOf(prepared)) {
+    return false;
+  }
+  if (!written.result.ok) {
     if (error != nullptr) {
-      *error = written.error;
+      *error = written.result.error;
     }
     return false;
   }
-
-  document_->line_ending = effective_ending;
-
-  if (changed) {
+  document_->line_ending = prepared.line_ending;
+  const bool unchanged = content_revision() == prepared.content_revision;
+  if (unchanged && written.normalized.has_value()) {
     const ViewState pre_normalize_view = CaptureViewState();
-    ReplaceLines(0, document_->lines.size(), std::move(normalized), true);
+    ReplaceLines(0, document_->lines.size(), std::move(*written.normalized), true);
     RestoreViewState(pre_normalize_view);
     ClampCaretSetToDocument();
     PruneCoincidentSecondaryCarets();
     ClampScrollState();
   }
-
-  document_->mixed_line_endings = false;
-  document_->dirty = false;
-  document_->undo_history.MarkSaved();
-  document_->disk_signature = written.signature;
-  TraceBufferIo("write", text.size(), digest);
+  if (unchanged) {
+    document_->mixed_line_endings = false;
+    document_->dirty = false;
+    document_->undo_history.MarkSaved();
+  } else if (written.normalized.has_value()) {
+    document_->undo_history.MarkNoPositionSaved();
+  } else {
+    document_->undo_history.MarkSavedAt(prepared.save_point);
+    document_->dirty = !document_->undo_history.IsAtSavePoint(prepared.save_point);
+  }
+  document_->disk_signature = written.result.signature;
+  TraceBufferIo("write", written.bytes, written.digest);
   return true;
 }
 

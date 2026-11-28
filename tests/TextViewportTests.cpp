@@ -1631,6 +1631,85 @@ void TestApplyEntryToBufferAppliesEveryDisjointPart() {
          "applying it backward must restore every part");
 }
 
+namespace save_point {
+
+using microide::editor::CoalesceHint;
+using microide::editor::CoalesceKind;
+using microide::editor::TextViewportUndoHistory;
+
+TextViewportUndoHistory::Entry Typed(std::size_t column, std::string text) {
+  TextViewportUndoHistory::Entry entry;
+  entry.is_inline = true;
+  entry.start_column = column;
+  entry.inserted_text = std::move(text);
+  entry.before_state.cursor_column = column;
+  entry.after_state.cursor_column = column + entry.inserted_text.size();
+  entry.before_state.dirty = true;
+  entry.after_state.dirty = true;
+  return entry;
+}
+
+constexpr CoalesceHint kTyping{.kind = CoalesceKind::Insert};
+
+std::string CleanBoundaries(const TextViewportUndoHistory& history) {
+  std::string out;
+  const auto note = [&out](const TextViewportUndoHistory::Entry& entry, const char* side) {
+    out += entry.inserted_text + ":" + side + " ";
+  };
+  for (const auto* stack : {&history.UndoStackForTesting(), &history.RedoStackForTesting()}) {
+    for (const TextViewportUndoHistory::Entry& entry : *stack) {
+      if (!entry.before_state.dirty) note(entry, "before");
+      if (!entry.after_state.dirty) note(entry, "after");
+    }
+  }
+  return out;
+}
+
+}
+
+void TestASavePointKeepsLaterTypingOutOfTheSavedEntry() {
+  using namespace save_point;
+  TextViewportUndoHistory history;
+  history.RecordEntry(Typed(0, "a"), kTyping);
+  const TextViewportUndoHistory::SavePoint point = history.CaptureSavePoint();
+  history.RecordEntry(Typed(1, "b"), kTyping);
+  Expect(history.UndoStackForTesting().size() == 2,
+         "typing after a save point starts its own entry, so the saved state stays a boundary");
+  history.MarkSavedAt(point);
+  Expect(CleanBoundaries(history) == "a:after b:before ",
+         "the boundary the save captured is the clean one: " + CleanBoundaries(history));
+  Expect(!history.IsAtSavePoint(point), "the history has moved past the point");
+  history.PushRedo(history.PopUndo());
+  Expect(history.IsAtSavePoint(point), "and undoing the later typing comes back to it");
+}
+
+void TestASavePointSurvivesItsEntryBeingUndone() {
+  using namespace save_point;
+  TextViewportUndoHistory history;
+  history.RecordEntry(Typed(0, "a"), kTyping);
+  history.RecordEntry(Typed(5, "b"), kTyping);
+  const TextViewportUndoHistory::SavePoint point = history.CaptureSavePoint();
+  history.PushRedo(history.PopUndo());
+  history.MarkSavedAt(point);
+  Expect(CleanBoundaries(history) == "b:after ",
+         "an undone saved entry is clean after it, on the redo side: " + CleanBoundaries(history));
+}
+
+void TestASavePointAtTheBaseIsLostWithTheOldestEntries() {
+  using namespace save_point;
+  TextViewportUndoHistory history;
+  const TextViewportUndoHistory::SavePoint base = history.CaptureSavePoint();
+  history.RecordEntry(Typed(0, "a"), kTyping);
+  history.MarkSavedAt(base);
+  Expect(CleanBoundaries(history) == "a:before ", "the base is clean before the first entry");
+  Expect(!history.IsAtSavePoint(base), "one entry past the base");
+  for (std::size_t i = 0; i < 200; ++i) {
+    history.RecordEntry(Typed(i * 10, "x"), CoalesceHint{});
+  }
+  history.MarkSavedAt(base);
+  Expect(!history.HasSavedPosition(), "the base fell out of the history with its oldest entries");
+}
+
 void TestInlineUndoEntriesCoalesceLikeSequentialApplication() {
   using microide::editor::CoalesceHint;
   using microide::editor::CoalesceKind;
@@ -4876,6 +4955,54 @@ void TestTextViewportABufferThatBecameBytesSavesItsMarkAndEndings() {
          "and the file gets what the buffer holds: the mark, the bytes and CRLF");
 }
 
+void TestASaveWrittenWhileTheBufferMovedOnLeavesItDirtyAndUndoFindsTheSavedText() {
+  const std::filesystem::path path = WriteScratchFile("async-save.txt", "one\n");
+  TextViewport view;
+  Expect(view.OpenFile(path), "the file opens");
+  view.MoveCursorTo(0, 3);
+  view.InsertText("A");
+  std::optional<TextViewport::PreparedSave> prepared = view.PrepareSave();
+  Expect(prepared.has_value(), "a dirty file buffer prepares a save");
+  view.InsertText("B");
+  TextViewport::WrittenSave written =
+      TextViewport::WritePreparedSave(*prepared, microide::project::LocalFileWriteGate());
+  Expect(view.ApplyWrittenSave(*prepared, std::move(written)), "the write lands");
+  Expect(microide::util::ReadTextFile(path).value_or("") == "oneA\n", "the file holds the text as it was prepared");
+  Expect(view.dirty(), "the typing that came after is not saved");
+  Expect(view.HasDiskSignature(), "the buffer knows what it wrote");
+  Expect(view.Undo(), "undo the later typing");
+  Expect(view.SerializeDocumentText() == "oneA\n" && !view.dirty(),
+         "and the buffer is back at the saved text, clean");
+}
+
+void TestASaveNormalizedWhileTheBufferMovedOnHasNoCleanPoint() {
+  const std::filesystem::path path = WriteScratchFile("async-normalize.txt", "one\n");
+  TextViewport view;
+  Expect(view.OpenFile(path), "the file opens");
+  view.SetSaveTrimTrailingWhitespace(true);
+  view.MoveCursorTo(0, 3);
+  view.InsertText("  ");
+  std::optional<TextViewport::PreparedSave> prepared = view.PrepareSave();
+  view.InsertText("B");
+  Expect(view.ApplyWrittenSave(*prepared, TextViewport::WritePreparedSave(*prepared, microide::project::LocalFileWriteGate())),
+         "the write lands");
+  Expect(microide::util::ReadTextFile(path).value_or("") == "one\n", "the file holds the trimmed text");
+  Expect(view.dirty(), "still unsaved");
+  Expect(view.Undo() && view.dirty(), "the untrimmed text the buffer goes back to is not what the file holds");
+}
+
+void TestASaveForADocumentThatWasReplacedDoesNotApply() {
+  const std::filesystem::path path = WriteScratchFile("async-replaced.txt", "one\n");
+  TextViewport view;
+  Expect(view.OpenFile(path), "the file opens");
+  view.InsertText("A");
+  std::optional<TextViewport::PreparedSave> prepared = view.PrepareSave();
+  Expect(view.OpenFile(WriteScratchFile("async-other.txt", "two\n")), "another file takes the viewport");
+  Expect(!view.ApplyWrittenSave(*prepared, TextViewport::WritePreparedSave(*prepared, microide::project::LocalFileWriteGate())),
+         "the finished write is not the new document's");
+  Expect(view.SerializeDocumentText() == "two\n" && !view.dirty(), "which is untouched");
+}
+
 void TestTextViewportUtf8BomIsStrippedOnOpenAndWrittenOnSave() {
   const std::filesystem::path path =
       WriteScratchFile("bom.txt", "\xEF\xBB\xBF#!/bin/sh\necho hi\n");
@@ -5949,6 +6076,17 @@ void TestCaretBoundsFaultNamesTheCaretOutsideTheDocument() {
 }
 
 void RegisterTextViewportTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "TextViewportSave/ASaveWrittenWhileTheBufferMovedOnLeavesItDirtyAndUndoFindsTheSavedText",
+          TestASaveWrittenWhileTheBufferMovedOnLeavesItDirtyAndUndoFindsTheSavedText);
+  AddTest(tests, "TextViewportSave/ASaveNormalizedWhileTheBufferMovedOnHasNoCleanPoint",
+          TestASaveNormalizedWhileTheBufferMovedOnHasNoCleanPoint);
+  AddTest(tests, "TextViewportSave/ASaveForADocumentThatWasReplacedDoesNotApply",
+          TestASaveForADocumentThatWasReplacedDoesNotApply);
+  AddTest(tests, "TextViewportUndo/ASavePointKeepsLaterTypingOutOfTheSavedEntry",
+          TestASavePointKeepsLaterTypingOutOfTheSavedEntry);
+  AddTest(tests, "TextViewportUndo/ASavePointSurvivesItsEntryBeingUndone", TestASavePointSurvivesItsEntryBeingUndone);
+  AddTest(tests, "TextViewportUndo/ASavePointAtTheBaseIsLostWithTheOldestEntries",
+          TestASavePointAtTheBaseIsLostWithTheOldestEntries);
 AddTest(tests, "TextViewport/CaretBoundsFaultNamesTheCaretOutsideTheDocument", TestCaretBoundsFaultNamesTheCaretOutsideTheDocument);
 AddTest(tests, "TextViewport/EveryCutPathLeavesEveryCaretInside", TestEveryCutPathLeavesEveryCaretInside);
 AddTest(tests, "TextViewport/SelectedTextOfAViewportAnotherViewportEditedStaysInTheDocument",

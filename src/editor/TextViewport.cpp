@@ -1152,6 +1152,7 @@ void TextViewport::ResetMetadataAfterContent(const std::filesystem::path& path,
   selection_anchor_.reset();
   secondary_carets_.clear();
   document_->undo_history.Clear();
+  document_->load_generation = NextDocumentRevisionBase();
   document_->placeholder = placeholder;
   document_->dirty = dirty;
   document_->disk_signature = util::StatFileSignature(path);
