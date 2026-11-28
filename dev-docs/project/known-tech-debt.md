@@ -37,7 +37,7 @@ a failed write says why whether or not its tab is still open; `Blocking` saves
 teardown, project switch and shutdown flush it; a control-channel command replies
 after its writes land. Move to the ledger at the next review.
 
-### TD-2026-11-16-452 — what the soak still cannot say about a finding, or reach. [OPEN]
+### TD-2026-11-16-452 — what the soak still cannot say about a finding, or reach. [RESOLVED 2026-11-28]
 
 Left by the 2026-11-16 assessment of the soak (`tools/soak`) and the deep review
 that followed it the same day. That review closed the first three items the
@@ -141,7 +141,9 @@ splits "no replay reproduces" by it). Open, in the order they would pay:
      minimal replay and is checked again (three replays, and ddmin for the 171
      deterministic ones). Worth doing together with a wave of paint fixes, not
      alone.
-   - **The leak findings are unexplained.** Three sightings show 64-171 `bash`
+   - **The leak findings are unexplained: TRACKED in the soak ledger 2026-11-28.**
+     The children leak is `2d33d0bc377e` (claimed there by the soak-fix agent);
+     a soak finding is the ledger's to carry, not this file's. Three sightings show 64-171 `bash`
      children against 8-11 terminal panes the `terminals` query counted, in
      runs of the monkey that opened a terminal per terminal action; 40 plain
      `term`s keep shells and panes equal, and a replay of the 171-shell run
@@ -157,7 +159,9 @@ splits "no replay reproduces" by it). Open, in the order they would pay:
      with no settle in between (App.settled_since_record), and the replay sends
      such rows back to back, as it does a burst. A 120-step run: 57 of 226 rows
      marked, and its replay followed the run's path.
-   - **The QA driver itself aborted once, in CI (2026-11-26):** `run.py suite
+   - **The QA driver itself aborted once, in CI (2026-11-26): WATCHED 2026-11-28.**
+     Not seen in the fifteen `checks` runs since; a recurrence turns CI red with
+     every thread's stack, and is investigated then. `run.py suite
      --jobs 4` died on glibc's `malloc_consolidate(): invalid chunk size` (run
      45772974278; once in the 25 `checks` runs before it). The driver's in-process
      Xlib already calls XInitThreads first; with no core and no stack the cause is
