@@ -146,8 +146,10 @@ splits "no replay reproduces" by it). Open, in the order they would pay:
      terminal row painted 1.6 px past its pane into the status bar (clip rects
      snap outward to device pixels, so a row that did not fit painted where no
      damage reached); fixed in 699dd0265, rows and caret are laid out only when
-     they fit. Whether the 1.1 line was the same defect is not yet confirmed: the
-     next qa-scale run says.
+     they fit. 2026-11-28: `qa-scale` at 8a3d5bb67 is clean (42/42 scenarios and
+     both seeds at 1.25 and 1.75). The walk has changed since the monkey gained
+     actions, so this says the lane is green, not that the 1.1 line was the same
+     defect; if that line is a defect still, the soak's scale cells will show it.
 
 ### TD-2026-11-08-435 — the safety program's first pass: what landed, what it found, and what it left. [OPEN]
 
